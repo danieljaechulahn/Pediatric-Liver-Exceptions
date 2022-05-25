@@ -1,0 +1,125 @@
+---
+title: "Table 1"
+author: "Daniel Ahn"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+```{r table1}
+
+fortable1 <- p1 %>% 
+  mutate(age = CAN_AGE_AT_LISTING,
+         agegroup = case_when(
+           CAN_AGE_AT_LISTING < 1 ~ "< 12 Months",
+           CAN_AGE_AT_LISTING >= 1 & CAN_AGE_AT_LISTING <= 5 ~ "1-5 Years",
+           CAN_AGE_AT_LISTING > 5 & CAN_AGE_AT_LISTING <= 11 ~ "6-11 Years",
+           CAN_AGE_AT_LISTING > 11 ~ "12-17 Years"),
+         agegroup = factor(agegroup, levels = c("< 12 Months", 
+                                                "1-5 Years", 
+                                                "6-11 Years", 
+                                                "12-17 Years")),
+         sex = ifelse(CAN_GENDER == "M", "Male", "Female"),
+         sex = factor(sex, levels = c("Male", "Female")),
+         white = case_when(
+           CAN_RACE == 8 ~ "White",
+           TRUE ~ "Non-White"),
+         white = factor(white, levels = c("White", "Non-White")),
+         race = factor(CAN_RACE),
+         race = fct_lump(race, n = 4),
+         race = fct_recode(race,
+                           "White" = "8",
+                           "Black" = "16",
+                           "Hispanic" = "2000",
+                           "Asian" = "64",
+                           "Other" = "Other"),
+         functional_status = case_when(
+           CAN_FUNCTN_STAT > 4079 ~ "Little to No Impairment, 80-100%",
+           CAN_FUNCTN_STAT > 4049 & CAN_FUNCTN_STAT < 4071 ~ "Moderate Impairment, 50-70%",
+           CAN_FUNCTN_STAT > 4000 & CAN_FUNCTN_STAT < 4041 ~ "Severe Impairment, 10-40%",
+           CAN_FUNCTN_STAT == 996 ~ "Not Applicable, Patient Age < 1 Year",
+           TRUE ~ "Unknown"),
+         functional_status = ifelse(is.na(functional_status), "Unknown", functional_status),
+         functional_status = factor(functional_status, levels = c("Little to No Impairment, 80-100%",
+                                                                  "Moderate Impairment, 50-70%",
+                                                                  "Severe Impairment, 10-40%",
+                                                                  "Not Applicable, Patient Age < 1 Year",
+                                                                  "Unknown")),
+         blood_type = factor(
+           case_when(
+             CAN_ABO %in% c("A", "A1", "A2") ~ "A",
+             CAN_ABO %in% c("A1B", "A2B") ~ "AB",
+             TRUE ~ CAN_ABO)),
+         payor = case_when(
+           CAN_PRIMARY_PAY %in% c(2,3,4,5,6,7,13) ~ "Public",
+           CAN_PRIMARY_PAY == 1 ~ "Private",
+           TRUE ~ "Other"),
+         payor = factor(payor, levels = c("Private",
+                                          "Public",
+                                          "Other")),
+         dummydiagnosis = case_when(
+           CAN_DGN >= 4270 & CAN_DGN <= 4275 ~ "Biliary Atresia",
+           TRUE ~ "Not Biliary Atresia"),
+         dummydiagnosis = factor(dummydiagnosis, levels = c("Biliary Atresia", "Not Biliary Atresia")))
+  
+
+var_label_list <- list(age = "Age at Listing (Years)",
+                       agegroup = "Age Group",
+                       sex = "Sex",
+                       race = "Race",
+                       blood_type = "Blood Type",
+                       functional_status= "Functional Status",
+                       payor = "Insurance Type",
+                       dummydiagnosis = "Primary Diagnosis",
+                       exception = "MELD/PELD Exception Diagnosis",
+                       EXCEPTION = "Receipt of MELD/PELD Exception",
+                       LAB_SCORE = "Laboratory MELD/PELD",
+                       SCORE = "Allocation MELD/PELD",
+                       white = "White")
+labelled::var_label(fortable1) <- var_label_list
+
+my.render.cont <- function(x) {
+  with(stats.apply.rounding(stats.default(x), digits=3), c("", "Mean (SD)" = sprintf("%s (+/- %s)", MEAN, SD)))
+}
+
+# Here, this is a function I created for the p-value column. For continuous variables, I used the Wilcoxon ranked sum test, and for categorical variables, I used the Chi-squared test.
+
+pvalue <- function(x, ...) {
+  y <- unlist(x)
+  g <- factor(rep(1:length(x), times=sapply(x, length)))
+  if (is.numeric(y)) {
+    p <- wilcox.test(y ~ g)$p.value
+  } else {
+    p <- chisq.test(table(y, g))$p.value
+  }
+  c("", sub("<", "<", format.pval(p, digits=3, eps=0.001)))
+}
+
+table1(~ sex + agegroup + race + blood_type + dummydiagnosis + payor + LAB_SCORE | EXCEPTION, 
+       data=fortable1, render.missing = NULL, render.continuous = my.render.cont, 
+       render.categorical = "FREQ (PCTnoNA%)", overall = F, extra.col=list(`P-Value` = pvalue))
+
+```
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

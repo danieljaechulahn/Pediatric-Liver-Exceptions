@@ -1,0 +1,89 @@
+---
+title: "Assessing Matching Quality"
+author: "Daniel Ahn"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+```{r matching_quality}
+v <- data.frame(old = c("Allocation_Score", "PELD_or_MELD", "Laboratory_Score"),
+                new = c("Allocation Score", "PELD or MELD", "Laboratory Score"))
+
+love.plot(m.out, stats = c("mean.diffs", "ks.statistics"), 
+          binary = "std", abs = TRUE,
+          var.order = "unadjusted", var.names = v,
+          limits = c(0, 3.0), grid = FALSE, wrap = 10,
+          sample.names = c("Unmatched", "Matched"),
+          position = "top", shapes = c("circle", "triangle"),
+          colors = c("red", "blue")) 
+
+love.plot(m.out1, stats = c("mean.diffs", "ks.statistics"), 
+          binary = "std", abs = TRUE,
+          var.order = "unadjusted", var.names = v,
+          limits = c(0, 1.0), grid = FALSE, wrap = 10,
+          sample.names = c("Unmatched", "Matched"),
+          position = "top", shapes = c("circle", "triangle"),
+          colors = c("green", "orange")) 
+
+match1 <- bal.plot(m.out, var.name = "Allocation_Score", which = "both",
+          type = "density", mirror = TRUE) + 
+          theme(legend.position = "none") +
+          scale_fill_manual(values = c("#ddd3bb", "#e49f62")) +
+          scale_x_continuous(name = "Allocation Score") +
+          ggtitle("Distribution Pre/Post-Exact Matching by Allocation Score")
+
+match2 <- bal.plot(m.out, var.name = "PELD_or_MELD", which = "both",
+          type = "density", mirror = TRUE) + 
+          scale_fill_manual(name = "Exception Status", values = c("#ddd3bb", "#e49f62"), labels = c("Non-Exception", "Received 
+                                                                                                    Exception")) +
+          scale_x_discrete(name = "PELD or MELD", labels = c("PELD", "MELD"))  +
+          ggtitle("Distribution Pre/Post-Exact Matching by PELD or MELD")
+
+match3 <- bal.plot(m.out1, var.name = "Laboratory_Score", which = "both",
+          type = "density", mirror = TRUE) + 
+          theme(legend.position = "none") +
+          scale_fill_manual(values = c("#496061", "#8dd9d7")) +
+          scale_x_continuous(name = "Laboratory Score") +
+          ggtitle("Distribution Pre/Post-Exact Matching by Laboratory Score")
+
+
+match4 <- bal.plot(m.out1, var.name = "PELD_or_MELD", which = "both",
+          type = "density", mirror = TRUE) + 
+          scale_fill_manual(name = "Exception Status", values = c("#496061", "#8dd9d7"), labels = c("Non-Exception", "Received 
+                                                                                                    Exception")) +
+          scale_x_discrete(name = "PELD or MELD", labels = c("PELD", "MELD")) +
+          ggtitle("Distribution Pre/Post-Exact Matching by PELD or MELD")
+
+plot_grid(match1, match2,
+          ncol = 2, nrow = 1,
+          labels = c("A", "B"))
+
+plot_grid(match3, match4,
+          ncol = 2, nrow = 1,
+          labels = c("A", "B"))
+
+```
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

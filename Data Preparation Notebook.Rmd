@@ -1,0 +1,537 @@
+---
+title: "Data Preparation"
+author: "Daniel Ahn"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+```{r library}
+library(tidyverse)
+library(survival)
+library(cmprsk)
+library(survminer)
+library(lubridate)
+library(MatchIt)
+library(Matching)
+library(rgenoud)
+library(optmatch)
+library(devtools)
+library(papaja)
+library(survAUC)
+library(Hmisc)
+library(riskRegression)
+library(pec)
+library(boot)
+library(compareC)
+library(ezfun)
+library(coin)
+library(etm)
+library(table1)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+library(cowplot)
+library(coxme)
+library(cobalt)
+library(transplantr)
+```
+
+# Data Sources
+
+We uploaded all the necessary files from the SRTR Standard Analysis Files (2021 Q4).
+
+```{r data_read_in}
+
+cand_liin <- read_sas("cand_liin.sas7bdat", NULL)
+
+cand_thor <- read_sas("cand_thor.sas7bdat", NULL)
+
+cand_kipa <- read_sas("cand_kipa.sas7bdat", NULL)
+
+mpexcept <- read_sas("mpexcept.sas7bdat", NULL)
+
+stathist_liin <- read_sas("stathist_liin.sas7bdat", NULL)
+
+```
+
+```{r}
+
+candliverset <- cand_liin
+
+candliverset1 <- filter(candliverset, candliverset$WL_ORG == "LI" & 
+                       (candliverset$CAN_LISTING_DT >= as.POSIXct("2016-06-01") &
+                       candliverset$CAN_LISTING_DT <= as.POSIXct("2021-09-30")))
+
+#I made another variable called age-group to separate candidates based on age at listing.
+candliverset1 <- candliverset1 %>%
+  mutate(
+    AGE_GROUP = case_when(
+      CAN_AGE_AT_LISTING < 12 ~ 0,
+      (CAN_AGE_AT_LISTING >= 12 & CAN_AGE_AT_LISTING < 18) ~ 1,
+      CAN_AGE_AT_LISTING >= 18 ~ 2
+    )
+  )
+
+#Here, I filtered out adults and put children into a dataset called pediatrics.
+#I also filtered out patients who are status 1 (denoted as 6011 and 6012 in the 
+#variable CAN_INIT_ACT_STAT_CD). Patients who are status 1 are exempt from the 
+#MELD/PELD scoring system and thus should not be involved in our analysis.
+
+childrenset <- filter(candliverset1, AGE_GROUP == 0 | AGE_GROUP == 1)
+childrenset <- filter(childrenset, CAN_INIT_ACT_STAT_CD != 6010 &
+                        CAN_INIT_ACT_STAT_CD != 6011 & 
+                        CAN_INIT_ACT_STAT_CD != 6012 & 
+                        CAN_INIT_ACT_STAT_CD != 6999)
+
+```
+
+```{r}
+thor <- dplyr::select(cand_thor, "PX_ID", "PERS_ID", "CAN_LISTING_DT", "CAN_REM_DT", "WL_ORG", "CAN_LISTING_CTR_ID", "CAN_REM_CD")
+
+kipa <- dplyr::select(cand_kipa, "PX_ID", "PERS_ID", "CAN_LISTING_DT", "CAN_REM_DT", "WL_ORG", "CAN_LISTING_CTR_ID", "CAN_REM_CD")
+
+justpedliver <- dplyr::select(childrenset, "PX_ID", "PERS_ID", "CAN_LISTING_DT", "CAN_REM_DT", "WL_ORG", "CAN_LISTING_CTR_ID", "CAN_REM_CD")
+
+thorkipa <- rbind(thor, kipa)
+justpedliver_thorkipa <- rbind(thorkipa, justpedliver)
+
+#This selects for all patients who have been listed at only site and are liver-only.
+justpedliver_thorkipa_1 <- justpedliver_thorkipa %>% group_by(PERS_ID) %>% filter(n() == 1) %>%
+  filter(WL_ORG == "LI") %>% dplyr::select("PX_ID", "PERS_ID", "CAN_LISTING_DT", "CAN_REM_DT", "WL_ORG", "CAN_LISTING_CTR_ID", "CAN_REM_CD")
+
+#This is to find patients who have been listed with a liver and 1 other organ. Multi-organ is when patients are listed with both organs within 21 days of each other.
+justpedliver_thorkipa_2 <- justpedliver_thorkipa %>% group_by(PERS_ID) %>% filter(n() > 1) %>% 
+  filter(any(WL_ORG == "LI"))  %>% filter(n() == 2) %>% filter(any(WL_ORG != "LI")) %>%
+  mutate(MULTIORGAN = case_when(
+    abs(as.numeric(difftime(first(CAN_LISTING_DT), last(CAN_LISTING_DT), units = "days"))) <= 21 ~ 1,
+    TRUE ~ 0
+  )) %>% filter(MULTIORGAN == 0) %>% ungroup() %>% filter(WL_ORG == "LI") %>%
+  dplyr::select("PX_ID", "PERS_ID", "CAN_LISTING_DT", "CAN_REM_DT", "WL_ORG", "CAN_LISTING_CTR_ID", "CAN_REM_CD")
+
+#This is for patients who have been listed with a liver twice. This is to determine whether the patients
+#had been listed at multiple sites or are a re-transplant.
+justpedliver_thorkipa_2_2 <- justpedliver_thorkipa %>% group_by(PERS_ID) %>% arrange(CAN_LISTING_DT) %>% 
+  filter(n() > 1) %>% filter(any(WL_ORG == "LI"))  %>% filter(n() == 2) %>% filter(sum(WL_ORG == "LI") == 2) %>%
+  mutate(MULTIPLE_LISTING = case_when(
+    as.numeric(difftime(last(CAN_LISTING_DT), first(CAN_REM_DT), units = "days")) < 0 ~ 1,
+    TRUE ~ 0
+  )) %>% filter(MULTIPLE_LISTING == 0) %>% ungroup() %>%
+  dplyr::select("PX_ID", "PERS_ID", "CAN_LISTING_DT", "CAN_REM_DT", "WL_ORG", "CAN_LISTING_CTR_ID", "CAN_REM_CD")
+
+x <- justpedliver_thorkipa %>% group_by(PERS_ID) %>% arrange(CAN_LISTING_DT) %>% 
+  filter(n() > 1) %>% filter(any(WL_ORG == "LI"))  %>% filter(n() == 2) %>% filter(sum(WL_ORG == "LI") == 2) %>%
+  mutate(MULTIPLE_LISTING = case_when(
+    as.numeric(difftime(last(CAN_LISTING_DT), first(CAN_REM_DT), units = "days")) < 0 ~ 1,
+    TRUE ~ 0
+  )) %>% filter(MULTIPLE_LISTING == 1) %>% filter(any(CAN_REM_CD == 7)) %>%
+  mutate(CAN_REM_DT = replace(CAN_REM_DT, 1, last(CAN_REM_DT))) %>% slice_head(n = 1) %>%
+  dplyr::select("PX_ID", "PERS_ID", "CAN_LISTING_DT", "CAN_REM_DT", "WL_ORG", "CAN_LISTING_CTR_ID", "CAN_REM_CD")
+
+x1 <- justpedliver_thorkipa %>% group_by(PERS_ID) %>% arrange(CAN_LISTING_DT) %>% 
+  filter(n() > 1) %>% filter(any(WL_ORG == "LI"))  %>% filter(n() == 2) %>% filter(sum(WL_ORG == "LI") == 2) %>%
+  mutate(MULTIPLE_LISTING = case_when(
+    as.numeric(difftime(last(CAN_LISTING_DT), first(CAN_REM_DT), units = "days")) < 0 ~ 1,
+    TRUE ~ 0
+  )) %>% filter(MULTIPLE_LISTING == 1) %>% filter(any(CAN_REM_CD == 14)) %>% ungroup() %>%
+  filter(CAN_REM_CD != 14) %>%
+  dplyr::select("PX_ID", "PERS_ID", "CAN_LISTING_DT", "CAN_REM_DT", "WL_ORG", "CAN_LISTING_CTR_ID", "CAN_REM_CD")
+
+x2 <- justpedliver_thorkipa %>% group_by(PERS_ID) %>% arrange(CAN_LISTING_DT) %>% 
+  filter(n() > 1) %>% filter(any(WL_ORG == "LI"))  %>% filter(n() == 2) %>% filter(sum(WL_ORG == "LI") == 2) %>%
+  mutate(MULTIPLE_LISTING = case_when(
+    as.numeric(difftime(last(CAN_LISTING_DT), first(CAN_REM_DT), units = "days")) < 0 ~ 1,
+    TRUE ~ 0
+  )) %>% filter(MULTIPLE_LISTING == 1) %>% filter(!any(CAN_REM_CD == 14) & !any(CAN_REM_CD == 7)) %>% slice_head(n = 1) %>%
+  dplyr::select("PX_ID", "PERS_ID", "CAN_LISTING_DT", "CAN_REM_DT", "WL_ORG", "CAN_LISTING_CTR_ID", "CAN_REM_CD")
+
+justpedliver_thorkipa_3 <- justpedliver_thorkipa %>% group_by(PERS_ID) %>% arrange(CAN_LISTING_DT) %>%
+  filter(n() > 1) %>% filter(any(WL_ORG == "LI"))  %>% filter(n() > 2)  %>% 
+  filter(CAN_LISTING_DT >= as.POSIXct("2016-05-11")) %>% filter(n() == 1) %>%
+  dplyr::select("PX_ID", "PERS_ID", "CAN_LISTING_DT", "CAN_REM_DT", "WL_ORG", "CAN_LISTING_CTR_ID", "CAN_REM_CD")
+
+justpedliver_thorkipa_3_2 <- justpedliver_thorkipa %>% group_by(PERS_ID) %>% arrange(CAN_LISTING_DT) %>%
+  filter(n() > 1) %>% filter(any(WL_ORG == "LI"))  %>% filter(n() > 2)  %>% 
+  filter(CAN_LISTING_DT >= as.POSIXct("2016-05-11")) %>% filter(n() == 2) %>%
+  mutate(MULTIORGAN = case_when(
+    abs(as.numeric(difftime(first(CAN_LISTING_DT), last(CAN_LISTING_DT), units = "days"))) <= 21 ~ 1,
+    TRUE ~ 0
+  )) %>% filter(MULTIORGAN == 0) %>% ungroup() %>% filter(WL_ORG == "LI") %>%
+  dplyr::select("PX_ID", "PERS_ID", "CAN_LISTING_DT", "CAN_REM_DT", "WL_ORG", "CAN_LISTING_CTR_ID", "CAN_REM_CD")
+
+justpedliver_thorkipa_3_3 <- justpedliver_thorkipa %>% group_by(PERS_ID) %>% arrange(CAN_LISTING_DT) %>%
+  filter(n() > 1) %>% filter(any(WL_ORG == "LI"))  %>% filter(n() > 2)  %>% 
+  filter(CAN_LISTING_DT >= as.POSIXct("2016-05-11")) %>% filter(n() == 3) 
+
+wtf <- justpedliver_thorkipa_3_3 %>% filter(sum(WL_ORG == "LI") == 1)
+
+wtf1 <- justpedliver_thorkipa_3_3 %>% filter(sum(WL_ORG == "LI") == 1) %>%
+  slice_head(n = 2) %>%
+  mutate(MULTIORGAN = case_when(
+    abs(as.numeric(difftime(first(CAN_LISTING_DT), last(CAN_LISTING_DT), units = "days"))) <= 21 ~ 1,
+    TRUE ~ 0
+  ))
+
+wtf2 <- justpedliver_thorkipa_3_3 %>% filter(sum(WL_ORG == "LI") == 1) %>%
+  slice_tail(n = 2) %>%
+  mutate(MULTIORGAN = case_when(
+    abs(as.numeric(difftime(first(CAN_LISTING_DT), last(CAN_LISTING_DT), units = "days"))) <= 21 ~ 1,
+    TRUE ~ 0
+  ))
+
+wtf3 <- rbind(wtf1, wtf2) %>% group_by(PERS_ID) %>% filter(WL_ORG == "LI") %>% filter(!any(MULTIORGAN == 1))
+
+extraone$CAN_LISTING_DT <- as.Date(extraone$CAN_LISTING_DT)
+extraone$CAN_REM_DT <- as.Date(extraone$CAN_REM_DT)
+
+yee <- justpedliver_thorkipa_3_3 %>% filter(sum(WL_ORG == "LI") != 1)
+extra <- extra %>% dplyr::select("PX_ID", "PERS_ID", "CAN_LISTING_DT", "CAN_REM_DT", "WL_ORG", "CAN_REM_CD")
+extra$CAN_LISTING_DT <- as.Date(extra$CAN_LISTING_DT)
+extra$CAN_REM_DT <- as.Date(extra$CAN_REM_DT)
+
+justpedliver_thorkipa_3_4 <- justpedliver_thorkipa %>% group_by(PERS_ID) %>% arrange(CAN_LISTING_DT) %>%
+  filter(n() > 1) %>% filter(any(WL_ORG == "LI"))  %>% filter(n() > 2)  %>% 
+  filter(CAN_LISTING_DT >= as.POSIXct("2016-05-11")) %>% filter(n() == 4) 
+#COUNT HOW MANY LIVERS THERE ARE HERE TO DETERMINE NUMBER OF MULTI-ORGAN LISTINGS
+
+justpedliver_thorkipa_3_5 <- justpedliver_thorkipa %>% group_by(PERS_ID) %>% arrange(CAN_LISTING_DT) %>%
+  filter(n() > 1) %>% filter(any(WL_ORG == "LI"))  %>% filter(n() > 2)  %>% 
+  filter(CAN_LISTING_DT >= as.POSIXct("2016-05-11")) %>% filter(n() > 4) 
+#ONLY ONE HERE
+
+total <- do.call("rbind", list(justpedliver_thorkipa_1, justpedliver_thorkipa_2,
+                               justpedliver_thorkipa_2_2, x, x1, x2, justpedliver_thorkipa_3,
+                               justpedliver_thorkipa_3_2, extraone))
+
+
+```
+
+```{r}
+finalcandidateset <- merge(x = total, y = cand_liin, by = "PX_ID", all.x = TRUE)
+
+finalcandidateset1 <- finalcandidateset %>%
+  mutate(
+    CAN_DGN = ifelse((CAN_DGN_OSTXT == "UREA CYCLE DISORDER" |
+                          CAN_DGN_OSTXT == "METABOLIC DISEASE" |
+                          CAN_DGN_OSTXT == "MMA" |
+                          CAN_DGN_OSTXT == "METHYLMALONIC ACIDEMIA" | 
+                          CAN_DGN_OSTXT == "ORNITHINE TRANSCARBAMYLASE DEFICIENCY" |
+                          CAN_DGN_OSTXT == "ARGINOSUCCINATE LYASE DEFICIENCY" |
+                          CAN_DGN_OSTXT == "CITRULLINEMIA TYPE 1" |
+                          CAN_DGN_OSTXT == "PROPINOIC ACIDEMIA" |
+                          CAN_DGN_OSTXT == "ARGINASE DEFICIENCY" |
+                          CAN_DGN_OSTXT == "ORNITHINE TRANSCARBAMOYL DEFICIENCY" |
+                          CAN_DGN_OSTXT == "CARBAMOYL PHOSPHATE SYNTHETASE-1 DEFICIENCY" |
+                          CAN_DGN_OSTXT == "TYROSINEMIA TYPE 1" |
+                          CAN_DGN_OSTXT == "MAPLE SYRUP URINE DISEASE" |
+                          CAN_DGN_OSTXT == "CARBAMOYL PHOSPHATE SYNTHETASE 1 DEFICIENCY" |
+                          CAN_DGN_OSTXT == "ARGININOSUCCINATE LYASE DEFICIENCY" |
+                          CAN_DGN_OSTXT == "OTC DEFUCUEBCT (NETABOLIC DISORDER)" |
+                          CAN_DGN_OSTXT == "METHYLMIOLONIC ACIDEMIA" |
+                          CAN_DGN_OSTXT == "METHYLMALONIC ACIDURIA" |
+                          CAN_DGN_OSTXT == "OTC DEFICIENCY" |
+                          CAN_DGN_OSTXT == "HYDROXYLMETHYLBILANE DEFICIENCY" |
+                          CAN_DGN_OSTXT == "OMITHINE TRANSCARBAMOYL DEFICIENCY" |
+                          CAN_DGN_OSTXT == "PROPIONIC ACIDEMIA" |
+                          CAN_DGN_OSTXT == "CONGENITAL GLYCOSYLATION DISORDER" |
+                          CAN_DGN_OSTXT == "PROPRIONIC ACIDEMIA" |
+                          CAN_DGN_OSTXT == "ETHYLMALONIC ENCEPHALOPATHY" |
+                          CAN_DGN_OSTXT == "OTC" |
+                          CAN_DGN_OSTXT == "ARGININOSUCCINIC ACIDURIA" |
+                          CAN_DGN_OSTXT == "ASL DEFICIENCY"), 4315, CAN_DGN),
+    CAN_DGN = ifelse(CAN_DGN == 999 & 
+                       (CAN_DGN_OSTXT == "CYSTIC FIBROSIS"), 4285, CAN_DGN),
+    CAN_DGN = ifelse(CAN_DGN == 999 & 
+                       (CAN_DGN_OSTXT == "HEPATOPULMONARY SYNDROME" |
+                       CAN_DGN_OSTXT == "HPS RELATED TO DYSKERATOSIS CONGENITA" |
+                       CAN_DGN_OSTXT == "ABERNATHY SYNDROME WITH HEPATOPULMONARY SYNDROME" |
+                       CAN_DGN_OSTXT == "CHRONIC BILIARY STRICTURES, HEPATOPULMONARY SYND." |  
+                       CAN_DGN_OSTXT == "SLD WITH HPS, PRESUMED DYSKERATOSIS CONGENITA"), 1000, CAN_DGN),
+    CAN_DGN = ifelse(CAN_DGN == 999 & 
+                       (CAN_DGN_OSTXT == "HEPATOCELLULAR CARCINOMA"), 4400, CAN_DGN))
+
+finalcandidateset1 <- filter(finalcandidateset1, !(CAN_DGN == 4303 | CAN_DGN == 4304 | CAN_DGN == 4306 | CAN_DGN == 4308 | CAN_DGN == 4315))
+finalcandidateset1 <- filter(finalcandidateset1, CAN_DGN != 4307)
+finalcandidateset1 <- filter(finalcandidateset1, CAN_DGN != 4285)
+finalcandidateset1 <- filter(finalcandidateset1, CAN_DGN != 1000)
+finalcandidateset1 <- filter(finalcandidateset1, CAN_DGN != 4400)
+finalcandidateset1 <- filter(finalcandidateset1, CAN_DGN != 4404)
+finalcandidateset1 <- filter(finalcandidateset1, CAN_DGN != 4420)
+
+livers <- merge(x = finalcandidateset1, y = stathist_liin, by = "PX_ID", all.x = TRUE)
+
+pediatrics <- livers %>%
+  mutate(
+    POLICY_COHORT = case_when(
+      (CAN_LISTING_DT.x >= as.POSIXct("2016-06-01") & CAN_LISTING_DT.x <= as.POSIXct("2018-09-30")) ~ "Pre-Policy",
+      (CAN_LISTING_DT.x >= as.POSIXct("2019-06-01") & CAN_LISTING_DT.x <= as.POSIXct("2021-09-30")) ~ "Post-Policy",
+      (CAN_LISTING_DT.x >= as.POSIXct("2018-10-01") & CAN_LISTING_DT.x <= as.POSIXct("2019-05-31")) ~ "Between"
+    )
+  )
+
+pediatrics <- rename(pediatrics, CAN_INIT_ACT_STAT_DT = CAN_INIT_ACT_STAT_DT.x, 
+                     CAN_INIT_ACT_STAT_CD = CAN_INIT_ACT_STAT_CD.x, CAN_LAST_STAT = CAN_LAST_STAT.x,
+                     CAN_LAST_ACT_STAT_DT = CAN_LAST_ACT_STAT_DT.x, CAN_GENDER = CAN_GENDER.x,
+                     PERS_ID = PERS_ID.x, CAN_INIT_SRTR_LAB_MELD = CAN_INIT_SRTR_LAB_MELD.x,
+                     CAN_LISTING_CTR_ID = CAN_LISTING_CTR_ID.x)
+
+peds <- dplyr::select(pediatrics, "PX_ID", "PERS_ID", "REC_TX_DT", "CAN_REM_DT", "CAN_REM_CD", 
+                      "CAN_LISTING_DT", "CANHX_BEGIN_DT", "CANHX_END_DT", "CAN_DEATH_DT",
+                      "PERS_OPTN_DEATH_DT", "PERS_SSA_DEATH_DT", "CANHX_EXC_FLG", 
+                      "CANHX_EXC_SCORE", "CANHX_KEEP_PED_STAT_FLG", "CANHX_OPTN_LAB_MELD", 
+                      "CANHX_SRTR_LAB_MELD", "CANHX_STAT_CD", "CAN_INIT_ACT_STAT_DT", 
+                      "CAN_AGE_AT_LISTING", "CAN_INIT_ACT_STAT_CD", "CAN_INIT_SRTR_LAB_MELD",
+                      "CAN_LAST_STAT", "CAN_LAST_ACT_STAT_DT", "POLICY_COHORT", "CAN_LISTING_CTR_ID", 
+                      "CAN_DGN", "CAN_DGN_OSTXT", "CAN_GENDER", "CAN_ABO", "CAN_RACE", 
+                      "CAN_FUNCTN_STAT", "CAN_AGE_IN_MONTHS_AT_LISTING", "CAN_PRIMARY_PAY", "WL_ORG")
+
+mpexceptshort1 <- dplyr::select(mpexcept, c(
+  "PX_ID",
+  "CANHX_MPXCPT_APPL_TY",
+  "CANHX_MPXCPT_BEGIN_DT",
+  "CANHX_MPXCPT_CASE_CUR_FORM",
+  "CANHX_MPXCPT_CASE_ID",
+  "CANHX_MPXCPT_DGN",
+  "CANHX_MPXCPT_END_DT",
+  "CANHX_MPXCPT_FORM_ID",
+  "CANHX_MPXCPT_MELD_OR_PELD",
+  "CANHX_MPXCPT_MOST_RECENT_APPROV",
+  "CANHX_MPXCPT_ORGANIC_ACIDEMIA",
+  "CANHX_MPXCPT_ORIG_APPL_DT",
+  "CANHX_MPXCPT_OTC",
+  "CANHX_MPXCPT_REGION",
+  "CANHX_MPXCPT_REQUEST_SCORE",
+  "CANHX_MPXCPT_STAT",
+  "CANHX_MPXCPT_STAT_DT"
+))
+
+mpexceptshort1 <- mpexceptshort1 %>% 
+  group_by(PX_ID) %>%
+  arrange(PX_ID, CANHX_MPXCPT_ORIG_APPL_DT) 
+mpexceptshort1 <- mpexceptshort1[!duplicated(mpexceptshort1$PX_ID), ]
+mpexceptshort1 <- mpexceptshort1 %>% ungroup()
+
+pedsexception <- merge(x = peds, y = mpexceptshort1, by = "PX_ID", all.x = TRUE)
+pedsexception <- pedsexception %>% mutate(CAN_INIT_SRTR_LAB_MELD = ifelse(is.na(CAN_INIT_SRTR_LAB_MELD), CAN_INIT_ACT_STAT_CD, CAN_INIT_SRTR_LAB_MELD))
+pedsexception <- pedsexception %>% group_by(PX_ID) %>% mutate(
+  APPLICATIONTIME = case_when(
+    abs(as.numeric(difftime(CAN_LISTING_DT, CANHX_MPXCPT_ORIG_APPL_DT, units = "days"))) <= 7 ~ 1,
+    TRUE ~ 0),
+  STAT_AT_EXCEPTION_APPLICATION = ifelse(
+    CANHX_MPXCPT_ORIG_APPL_DT >= CANHX_BEGIN_DT & CANHX_MPXCPT_ORIG_APPL_DT <= CANHX_END_DT, CANHX_SRTR_LAB_MELD, 0) 
+) %>% mutate(STAT_AT_EXCEPTION_APPLICATION = STAT_AT_EXCEPTION_APPLICATION[STAT_AT_EXCEPTION_APPLICATION != 0])
+
+peds1 <- filter(pedsexception, APPLICATIONTIME == 1)
+
+peds1.1 <- peds1 %>% group_by(PX_ID) %>% arrange(CANHX_BEGIN_DT) %>% filter(any(CANHX_EXC_FLG == 1)) %>% 
+  filter(CANHX_EXC_FLG == 1) %>% filter(row_number() == 1) %>% 
+  filter(CANHX_MPXCPT_STAT == 5 | CANHX_MPXCPT_STAT == 14 | CANHX_MPXCPT_STAT == 16 | CANHX_MPXCPT_STAT == 18 | CANHX_MPXCPT_STAT == 30) %>%
+  filter(CANHX_MPXCPT_DGN == 9) %>% mutate(REC_EXCEPTION = 1)
+
+peds1.2 <- peds1 %>% group_by(PX_ID) %>% arrange(CANHX_BEGIN_DT) %>% filter(any(CANHX_EXC_FLG == 1)) %>% 
+  filter(CANHX_EXC_FLG == 1) %>% filter(row_number() == 1) %>% 
+  filter(!(CANHX_MPXCPT_STAT == 5 | CANHX_MPXCPT_STAT == 14 | CANHX_MPXCPT_STAT == 16 | CANHX_MPXCPT_STAT == 18 | CANHX_MPXCPT_STAT == 30)) %>%
+  mutate(REC_EXCEPTION = 0)
+
+peds1.3 <- peds1 %>% group_by(PX_ID) %>% arrange(CANHX_BEGIN_DT) %>% filter(!any(CANHX_EXC_FLG == 1)) %>% 
+  filter(row_number() == 1) %>% mutate(REC_EXCEPTION = 0)
+
+peds2 <- filter(pedsexception, APPLICATIONTIME == 0) %>% group_by(PX_ID) %>% 
+  arrange(CANHX_BEGIN_DT) %>% filter(row_number() == 1) %>% mutate(REC_EXCEPTION = 0)
+
+finalpeds <- do.call("rbind", list(peds1.1, peds1.2, peds1.3, peds2))
+finalpeds <- finalpeds %>% mutate(
+  REC_TX_DT = ifelse(CAN_REM_CD == 4, CAN_REM_DT, REC_TX_DT),
+  EXCEPTION_SCORE = case_when(
+    REC_EXCEPTION == 1 ~ CANHX_EXC_SCORE - 6200),
+  LAB_SCORE = case_when(
+    REC_EXCEPTION == 1 ~ STAT_AT_EXCEPTION_APPLICATION - 6200,
+    REC_EXCEPTION == 0 ~ CAN_INIT_SRTR_LAB_MELD - 6200),
+  SCORE_DIFFERENCE = case_when(
+    REC_EXCEPTION == 1 ~ EXCEPTION_SCORE - LAB_SCORE),
+  SCORE = case_when(
+    REC_EXCEPTION == 1 ~ EXCEPTION_SCORE,
+    REC_EXCEPTION == 0 ~ LAB_SCORE),
+  EXCEPTION = case_when(
+    REC_EXCEPTION == 1 ~ "Received Exception Points",
+    REC_EXCEPTION == 0 ~ "Did Not Receive Exception Points")
+) %>% ungroup()
+```
+
+```{r}
+p1 <- finalpeds
+
+p1 <- p1 %>%
+  mutate(
+    DEATH_DT = case_when(
+      !is.na(PERS_OPTN_DEATH_DT) ~ PERS_OPTN_DEATH_DT,
+      is.na(PERS_OPTN_DEATH_DT) ~ PERS_SSA_DEATH_DT
+    )
+  )
+
+p1$DEATH <- ifelse(p1$CAN_REM_CD == 8 | 
+                     (p1$CAN_REM_CD == 5 & !is.na(p1$DEATH_DT)) |
+                     (p1$CAN_REM_CD == 6 & !is.na(p1$DEATH_DT)) |
+                     (p1$CAN_REM_CD == 7 & !is.na(p1$DEATH_DT)) |
+                     (p1$CAN_REM_CD == 9 & !is.na(p1$DEATH_DT)) |
+                     (p1$CAN_REM_CD == 10 & !is.na(p1$DEATH_DT)) |
+                     (p1$CAN_REM_CD == 11 & !is.na(p1$DEATH_DT)) |
+                     (p1$CAN_REM_CD == 12 & !is.na(p1$DEATH_DT)) |
+                     (p1$CAN_REM_CD == 13 & !is.na(p1$DEATH_DT)) |
+                     (p1$CAN_REM_CD == 16 & !is.na(p1$DEATH_DT)) |
+                     (p1$CAN_REM_CD == 17 & !is.na(p1$DEATH_DT)) |
+                     (p1$CAN_REM_CD == 20 & !is.na(p1$DEATH_DT)) |
+                     (p1$CAN_REM_CD == 24 & !is.na(p1$DEATH_DT)), 1, 0)
+
+p1 <- p1 %>% mutate(DEATH = ifelse(is.na(DEATH), 0, DEATH))
+
+p1 <- p1 %>% mutate(
+  REMOVAL_DATE = ifelse(
+    (p1$CAN_REM_CD == 5 & !is.na(p1$DEATH_DT)) |
+      (p1$CAN_REM_CD == 6 & !is.na(p1$DEATH_DT)) |
+      (p1$CAN_REM_CD == 7 & !is.na(p1$DEATH_DT)) |
+      (p1$CAN_REM_CD == 9 & !is.na(p1$DEATH_DT)) |
+      (p1$CAN_REM_CD == 10 & !is.na(p1$DEATH_DT)) |
+      (p1$CAN_REM_CD == 12 & !is.na(p1$DEATH_DT)) |
+      (p1$CAN_REM_CD == 13 & !is.na(p1$DEATH_DT)) |
+      (p1$CAN_REM_CD == 16 & !is.na(p1$DEATH_DT)) |
+      (p1$CAN_REM_CD == 17 & !is.na(p1$DEATH_DT)) |
+      (p1$CAN_REM_CD == 20 & !is.na(p1$DEATH_DT)) |
+      (p1$CAN_REM_CD == 24 & !is.na(p1$DEATH_DT)), DEATH_DT, CAN_REM_DT))
+
+p1$REMOVAL_DATE <- as.Date(p1$REMOVAL_DATE, origin = "1970-01-01")
+p1$REC_TX_DT <- as.Date(p1$REC_TX_DT, origin = "1970-01-01")
+
+p1 <- p1 %>%
+  mutate(
+    LASTDATE = case_when(
+      is.na(REMOVAL_DATE) ~ CAN_LAST_ACT_STAT_DT,
+      TRUE ~ REMOVAL_DATE
+    )
+  )
+
+p1 <- p1 %>%
+  mutate(
+    REMOVAL_CAUSE = case_when(
+      is.na(CAN_REM_CD) ~ 0,
+      DEATH == 1 ~ 1,
+      CAN_REM_CD == 4 ~ 2,
+      TRUE ~ 3
+    )
+  )
+
+p1 <- p1 %>%
+  mutate(
+    removaltype = case_when(
+      REMOVAL_CAUSE == 0 | REMOVAL_CAUSE == 3 ~ 0,
+      REMOVAL_CAUSE == 1 ~ 1,
+      REMOVAL_CAUSE == 2 ~ 2
+    )
+  )
+
+p1 <- p1 %>%
+  mutate(
+    CENSOR_DT = case_when(
+      REMOVAL_CAUSE == 0 ~ CAN_LAST_ACT_STAT_DT,
+      REMOVAL_CAUSE == 3 ~ CAN_REM_DT
+    ))
+
+p1 <- p1 %>%
+  mutate(
+    FINAL_REMOVAL_DATE = case_when(
+      removaltype == 0 ~ CENSOR_DT,
+      removaltype == 1 ~ DEATH_DT,
+      removaltype == 2 ~ REC_TX_DT
+    )
+  )
+
+p1 <- p1 %>%
+  mutate(TIME_TO_REMOVAL = as.numeric(difftime(FINAL_REMOVAL_DATE, CAN_LISTING_DT, units = "days")))
+
+p1 <- p1 %>%
+  mutate(TIME_TO_REMOVAL_YEARS = TIME_TO_REMOVAL / 365.25)
+
+p1 <- p1 %>%
+  mutate(
+    MELDPELD = case_when(
+      CAN_AGE_AT_LISTING < 12 ~ 0,
+      CAN_AGE_AT_LISTING >= 12 ~ 1
+    )
+  )
+
+p1 <- p1 %>%
+  mutate(SURVIVAL_TIME = as.numeric(difftime(LASTDATE, CAN_LISTING_DT, units = "days")))
+
+p1 <- p1 %>%
+  mutate(SURVIVAL_TIME_YEARS = SURVIVAL_TIME / 365.25)
+
+p1 <- p1 %>% mutate(
+  PELD_or_MELD = MELDPELD,
+  Allocation_Score = SCORE,
+  Laboratory_Score = LAB_SCORE
+)
+levels(p1$PELD_or_MELD) <- c("PELD", "MELD")
+```
+
+```{r exact_matching}
+m.out = matchit(REC_EXCEPTION ~ Allocation_Score + PELD_or_MELD,
+                data = p1, method = "exact",
+                ratio = 1) 
+
+print(m.out)
+summary(m.out)
+plot(summary(m.out))
+
+
+m.out1 = matchit(REC_EXCEPTION ~ Laboratory_Score + PELD_or_MELD,
+                 data = p1, method = "exact",
+                 ratio = 1)
+
+matched_by_allocation <- match.data(m.out, group = "all")
+matched_by_laboratory <- match.data(m.out1, group = "all")
+
+matched_by_allocation <- matched_by_allocation %>%
+  mutate(
+    KMSTRATA = case_when(
+      REC_EXCEPTION == 0 ~ "Propensity-Matched by Allocation MELD/PELD",
+      REC_EXCEPTION == 1 ~ "Received MELD/PELD Exceptions",
+    )
+  )
+matched_by_allocation$KMSTRATA <- factor(matched_by_allocation$KMSTRATA, 
+                                         levels = c("Received MELD/PELD Exceptions",
+                                                    "Propensity-Matched by Allocation MELD/PELD"))
+matched_by_laboratory <- matched_by_laboratory %>%
+  mutate(
+    KMSTRATA = case_when(
+      REC_EXCEPTION == 0 ~ "Propensity-Matched by Laboratory MELD/PELD",
+      REC_EXCEPTION == 1 ~ "Received MELD/PELD Exceptions",
+    )
+  )
+matched_by_laboratory$KMSTRATA <- factor(matched_by_laboratory$KMSTRATA, 
+                                         levels = c("Received MELD/PELD Exceptions",
+                                                    "Propensity-Matched by Laboratory MELD/PELD"))
+
+```
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

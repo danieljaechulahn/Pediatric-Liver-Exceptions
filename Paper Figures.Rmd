@@ -1,0 +1,472 @@
+---
+title: "Figures"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+```{r color_schemes}
+custom_colors <- c(
+  `dark red` = "#660000",
+  `bright red` = "#b81d2e",
+  `orange` = "#ae6320",
+  `yellow`= "#b8a370",
+  `green` = "#3ba9a9",
+  `white` = "#FFFFFF",
+  `grey` = "#C3C1C1",
+  `light green` = "#8dd9d7",
+  `light yellow` = "#ddd3bb",
+  `light orange` = "#e49f62",
+  `space sparkle`= "#496061",
+  `violet` = "#7A3DE3",
+  `sandy brown` = "#FA9E4D")
+custom_col <- function(...) {
+  cols <- c(...)
+  if (is.null(cols))
+    return (drsimonj_colors)
+  custom_colors[cols]
+}
+custom_palettes <- list(
+  `main`  = custom_col("green", "yellow", "dark red"),
+  `cool`  = custom_col("green", "yellow","orange"),
+  `hot`   = custom_col("yellow", "dark red", "sandy brown"),
+  `simple` = custom_col("yellow", "dark red"),
+  `reallysimple` = custom_col("white", "dark red"),
+  `mixed` = custom_col("green", "yellow", "orange", "bright red", "dark red"),
+  `distinct` = custom_col("dark red", "bright red", "light yellow", "green","grey"),
+  `distinct1` = custom_col("dark red", "bright red",  "green","light yellow","grey"), 
+  `bar` = custom_col("green", "grey", "yellow", "orange", "bright red", "dark red"),
+  `treatment` = custom_col("dark red","green", "space sparkle", "orange", "violet","yellow","sandy brown","bright red"),
+  `exception` = custom_col("dark red", "yellow"),
+  `agegroup` = custom_col("bright red", "orange", "yellow", "grey")
+)
+custom_pal <- function(palette = "main", reverse = FALSE, ...) {
+  pal <- custom_palettes[[palette]]
+  if (reverse) pal <- rev(pal)
+  colorRampPalette(pal, ...)
+}
+scale_color_custom <- function(palette = "mixed", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- custom_pal(palette = palette, reverse = reverse)
+  if (discrete) {
+    discrete_scale("colour", paste0("custom_", palette), palette = pal, ...)
+  } else {
+    scale_color_gradientn(colours = pal(256), ...)
+  }
+}
+scale_fill_custom <- function(palette = "mixed", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- custom_pal(palette = palette, reverse = reverse)
+  if (discrete) {
+    discrete_scale("fill", paste0("custom_", palette), palette = pal, ...)
+  } else {
+    scale_fill_gradientn(colours = pal(256), ...)
+  }
+}
+
+```
+
+```{r fig1}
+exceptions <- filter(p1, REC_EXCEPTION == 1)
+d1 <- p1 %>%
+  mutate(
+    type = case_when(
+      REC_EXCEPTION == 0 ~ 0,
+      REC_EXCEPTION == 1 ~ 1
+    )
+  )
+exceptions <- exceptions %>% 
+  mutate(
+    type = case_when(
+      REC_EXCEPTION == 1 ~ 2
+    )
+  )
+d1 <- rbind(d1, exceptions)
+d1 <- d1 %>% 
+  mutate(
+    newscore = case_when(
+      type == 0 ~ SCORE,
+      type == 1 ~ SCORE,
+      type == 2 ~ LAB_SCORE
+    ),
+    except_type = case_when(
+      type == 0 ~ "Allocation/Laboratory Score of Patients without Exceptions",
+      type == 1 ~ "Allocation Score of Patients with Exceptions",
+      type == 2 ~ "Laboratory Score of Patients with Exceptions"
+    )
+  )
+d1$except_type <- as.factor(d1$except_type)
+
+ggplot(data = d1, aes(x = newscore)) +
+  geom_histogram(aes(fill = except_type, alpha = except_type == "Allocation/Laboratory Score of Patients without Exceptions"), color = "black",
+                 position = "identity", bins = 60) +
+  theme_apa() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "top") +
+  scale_fill_discrete(name = "") +
+  labs(x = "MELD/PELD Score", y = "Number of Candidates Listed") + 
+  scale_x_continuous(breaks = c(-20, -10, 0, 10, 20, 30, 40, 50, 60, 70)) +
+  scale_alpha_manual(values = c(1, 0.3), guide = "none") +
+  guides(fill = guide_legend(nrow = 3))
+```
+
+```{r fig2}
+
+survplot1 <-
+  ggsurvplot(
+  fit = survfit(Surv(SURVIVAL_TIME, DEATH) ~ KMSTRATA, data = matched_by_allocation),
+  pval = TRUE, 
+  pval.coord = c(0, 0.76),
+  conf.int = FALSE,
+  risk.table = TRUE, 
+  risk.table.col = "strata",
+  xlim = c(0, 180),
+  xlab = "Time after Listing in Days",
+  break.time.by = 45,
+  ylim = c(0.75, 1),
+  ylab = "Survival Probability",
+  censor = TRUE,
+  legend.labs = c("Exceptions", "Non-Exceptions (Matched by Allocation Score)"),
+  risk.table.y.text.col = T, 
+  risk.table.y.text = FALSE,
+  palette = c("#660000", "#b8a370")
+) + 
+  guides(colour = guide_legend(nrow = 2)) 
+
+survplot2 <- 
+  ggsurvplot(
+  fit = survfit(Surv(SURVIVAL_TIME, DEATH) ~ KMSTRATA, data = matched_by_laboratory),
+  pval = TRUE, 
+  pval.coord = c(0, 0.76),
+  conf.int = FALSE,
+  risk.table = TRUE, 
+  risk.table.col = "strata",
+  xlim = c(0, 180),
+  xlab = "Time after Listing in Days",
+  break.time.by = 45,
+  ylim = c(0.75, 1),
+  ylab = "Survival Probability",
+  censor = TRUE,
+  legend.labs = c("Exceptions", "Non-Exceptions (Matched by Laboratory Score)"),
+  risk.table.y.text.col = T, 
+  risk.table.y.text = FALSE,
+  palette = c("#660000", "#e49f62")
+) + 
+  guides(colour = guide_legend(nrow = 2)) 
+
+kmplots <- list()
+kmplots[[1]] <- survplot1
+kmplots[[2]] <- survplot2
+kmplots[[1]]$plot <- kmplots[[1]]$plot + labs(tag="A")
+kmplots[[2]]$plot <- kmplots[[2]]$plot + labs(tag="B")
+
+arrange_ggsurvplots(kmplots, print = TRUE,
+                    ncol = 2, nrow = 1)
+
+summary(survfit(Surv(SURVIVAL_TIME, DEATH) ~ KMSTRATA, data = matched_by_allocation), times = 180)
+summary(survfit(Surv(SURVIVAL_TIME, DEATH) ~ KMSTRATA, data = matched_by_laboratory), times = 180)
+
+```
+
+```{r fig3}
+
+cif <- cuminc(ftime = matched_by_allocation$TIME_TO_REMOVAL, 
+              fstatus = matched_by_allocation$removaltype, 
+              group = matched_by_allocation$REC_EXCEPTION, 
+              cencode = 0)
+
+cif[["Tests"]]
+timepoints(cif, 180)
+
+ciplotdata <-
+  cif %>%
+  list_modify("Tests" = NULL) %>%
+  map_df(`[`, c("time", "est"), .id = "id") %>%
+  mutate(id = recode(
+    id,
+    "0 1" = "No Exception, Matched by Allocation Score:Death",
+    "0 2" = "No Exception, Matched by Allocation Score:Transplant",
+    "1 1" = "Exception:Death",
+    "1 2" = "Exception:Transplant")
+  ) %>%
+  tidyr::separate(id, c("REC_EXCEPTION", "removaltype"), ":")
+
+cifplot <- ggplot(ciplotdata, aes(x = time, y = est, color = removaltype)) +
+  geom_step(lwd = 1.2, aes(linetype = REC_EXCEPTION))  +
+  ylim(c(0, 1)) +
+  coord_cartesian(xlim=c(0, 180)) + 
+  scale_x_continuous(breaks = c(0, 60, 120, 180)) +
+  theme_classic() +
+  guides(linetype=guide_legend(nrow=2, byrow=TRUE)) +
+  guides(color=guide_legend(nrow=2, byrow=TRUE)) +
+  theme(plot.title = element_text(size = 14),
+        legend.title = element_blank(),
+        legend.position = "bottom") +
+  labs(x = "Days after Listing", 
+       y = "Cumulative Incidence") +
+  annotate("text", x = 0, y = 1, hjust = 0,
+           label = paste0(
+             "Death p: ", 
+             ifelse(cif$Tests[1, 2] < .001, 
+                    "< 0.001", 
+                    round(cif$Tests[1, 2], 3)))) + 
+  annotate("text", x = 0, y = 0.92, hjust = 0,
+           label = paste0(
+             "Transplant p: ", 
+             ifelse(cif$Tests[2, 2] < .001, 
+                    "< 0.001", 
+                    round(cif$Tests[2, 2], 2)))) 
+
+cif1 <- cuminc(ftime = matched_by_laboratory$TIME_TO_REMOVAL, 
+               fstatus = matched_by_laboratory$removaltype, 
+               group = matched_by_laboratory$REC_EXCEPTION, 
+               cencode = 0)
+
+cif1[["Tests"]]
+timepoints(cif1, 180)
+
+ciplotdata1 <-
+  cif1 %>%
+  list_modify("Tests" = NULL) %>%
+  map_df(`[`, c("time", "est"), .id = "id") %>%
+  mutate(id = recode(
+    id,
+    "0 1" = "No Exception, Matched by Laboratory Score:Death",
+    "0 2" = "No Exception, Matched by Laboratory Score:Transplant",
+    "1 1" = "Exception:Death",
+    "1 2" = "Exception:Transplant")
+  ) %>%
+  tidyr::separate(id, c("REC_EXCEPTION", "removaltype"), ":")
+
+cifplot1 <- ggplot(ciplotdata1, aes(x = time, y = est, color = removaltype)) +
+  geom_step(lwd = 1.2, aes(linetype = REC_EXCEPTION))  +
+  ylim(c(0, 1)) +
+  coord_cartesian(xlim=c(0, 180)) + 
+  scale_x_continuous(breaks = c(0, 60, 120, 180)) +
+  theme_classic() +
+  guides(linetype=guide_legend(nrow=2, byrow=TRUE)) +
+  guides(color=guide_legend(nrow=2, byrow=TRUE)) +
+  theme(plot.title = element_text(size = 14),
+        legend.title = element_blank(),
+        legend.position = "bottom") +
+  labs(x = "Days after Listing", 
+       y = "Cumulative Incidence") +
+  annotate("text", x = 0, y = 1, hjust = 0,
+           label = paste0(
+             "Death p: ", 
+             ifelse(cif1$Tests[1, 2] < .001, 
+                    "< 0.001", 
+                    round(cif1$Tests[1, 2], 2)))) + 
+  annotate("text", x = 0, y = 0.92, hjust = 0,
+           label = paste0(
+             "Transplant p: ", 
+             ifelse(cif1$Tests[2, 2] < .001, 
+                    "< 0.001", 
+                    round(cif1$Tests[2, 2], 2)))) 
+
+plot_grid(cifplot, cifplot1,
+          ncol = 2, nrow = 1,
+          labels = c("A", "B"))
+```
+
+```{r fine_gray}
+crrtx <- 
+  crr(
+    ftime = matched_by_allocation$TIME_TO_REMOVAL,
+    fstatus = matched_by_allocation$removaltype,
+    cov1 = matched_by_allocation[, c("REC_EXCEPTION")],
+    failcode = 2,
+    cencode = 0
+  )
+
+summary(crrtx, conf.int = 0.95)
+
+crrtx1 <- 
+  crr(
+    ftime = matched_by_laboratory$TIME_TO_REMOVAL,
+    fstatus = matched_by_laboratory$removaltype,
+    cov1 = matched_by_laboratory[, c("REC_EXCEPTION")],
+    failcode = 2,
+    cencode = 0
+  )
+
+summary(crrtx1, conf.int = 0.95)
+```
+
+```{r fig4}
+
+ddlt <- pedsexception %>% group_by(PX_ID) %>% filter(CAN_REM_CD == 4) %>% 
+  arrange(CANHX_BEGIN_DT) %>% slice_tail(n = 1) %>%
+  mutate(EXCEPTION_AT_TRANSPLANT = case_when(
+    (CANHX_MPXCPT_STAT == 5 | CANHX_MPXCPT_STAT == 14 | CANHX_MPXCPT_STAT == 16 | CANHX_MPXCPT_STAT == 18 | CANHX_MPXCPT_STAT == 30) ~ 1,
+    TRUE ~ 0)) %>% filter(!(EXCEPTION_AT_TRANSPLANT == 1 & CANHX_MPXCPT_DGN != 9))
+
+hadexception <- filter(ddlt, EXCEPTION_AT_TRANSPLANT == 1) %>% 
+  mutate(EXCEPTION_STATUS = case_when(
+    EXCEPTION_AT_TRANSPLANT == 1 ~ "Active Exception at Time of Transplant"))
+a <- ddlt %>% 
+  mutate(EXCEPTION_STATUS = case_when(
+    EXCEPTION_AT_TRANSPLANT == 0 | EXCEPTION_AT_TRANSPLANT == 1 ~ "Total"))
+hadexception <- data_frame(hadexception)
+a <- data_frame(a)
+f5data <- rbind(hadexception, a)
+finalset1 <- f5data %>%
+  mutate(month = zoo::as.yearmon(CAN_LISTING_DT),
+         status = factor(EXCEPTION_STATUS,
+                         levels = c("Total", "Active Exception at Time of Transplant")))
+by_month1 <- finalset1 %>%
+  group_by(POLICY_COHORT, month) %>%
+  count(status) %>%
+  mutate(total_per_month = sum(n)) %>%
+  ungroup() %>%
+  mutate(month1 = factor(month),
+         percentage_per_month = 100*n/total_per_month) 
+policy_switch <- which(levels(by_month$month1) == "May 2019")
+pre_policy_start <- which(levels(by_month$month1) == "Jun 2016")
+pre_policy_end <- which(levels(by_month$month1) == "Sep 2018")
+post_policy_start <- which(levels(by_month$month1) == "Jun 2019")
+post_policy_end <- which(levels(by_month$month1) == "Sep 2021")
+
+fig5 <- ggplot(by_month1, aes(x = month1, 
+                              y = n, 
+                              color = status, 
+                              group = status)) +
+  geom_line() + 
+  geom_point() +
+  geom_vline(aes(xintercept = policy_switch, linetype = "Policy Switch")) + 
+  scale_color_custom(name = "Exception Status at Transplant", palette = "simple") +
+  labs(
+    x = "Month of Listing",
+    y = "Number of Transplant Recipients",
+    linetype = "",
+    color = "status") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+        axis.title.x = element_text(margin = margin(t = 15, r = 0, b = 0, l = 0)),
+        legend.position = "bottom",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.margin = margin(t=0, r=0, b=0, l=0, unit = "mm"),
+        legend.direction = "vertical",
+        legend.title.align = 0,
+        panel.background = element_rect(fill = "grey99"),
+        plot.background = element_rect(fill = "white"),
+        panel.border = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(size = 0.5, linetype = "solid", colour = "black")
+  ) +
+  scale_linetype_manual(values = c("dashed", "dotted", "solid")) +
+  scale_fill_custom(palette = "simple") +
+  guides(colour = guide_legend(nrow = 1)) +
+  annotate("text", x = which(levels(by_month$month1) == "Aug 2017"), y = 45, label= "Pre-Policy Cohort") +
+  annotate("text", x = which(levels(by_month$month1) == "Aug 2020"), y = 45, label= "Post-Policy Cohort") +
+  annotate("rect",
+           xmin = which(levels(by_month$month1) == "Jun 2016"),           
+           xmax = which(levels(by_month$month1) == "Sep 2018"),
+           ymin = 0, 
+           ymax = 50,  
+           alpha = 0.15) +
+  annotate("rect",
+           xmin = which(levels(by_month$month1) == "Jun 2019"),            
+           xmax = which(levels(by_month$month1) == "Sep 2021"),            
+           ymin = 0, 
+           ymax = 50, 
+           alpha = 0.15) 
+
+
+
+f6data <- ddlt %>% mutate(EXCEPTION_STATUS = case_when(
+  EXCEPTION_AT_TRANSPLANT == 0 ~ "No Exception",
+  EXCEPTION_AT_TRANSPLANT == 1 ~ "Active Exception at Time of Transplant"
+))
+
+finalset <- f6data %>%
+  mutate(month = zoo::as.yearmon(CAN_LISTING_DT),
+         status = factor(EXCEPTION_STATUS,
+                         levels = c("No Exception", "Active Exception at Time of Transplant")))
+by_month <- finalset %>%
+  group_by(POLICY_COHORT, month) %>%
+  count(status) %>%
+  mutate(total_per_month = sum(n)) %>%
+  ungroup() %>%
+  mutate(month1 = factor(month),
+         percentage_per_month = n*100/total_per_month) 
+policy_switch <- which(levels(by_month$month1) == "May 2019")
+pre_policy_start <- which(levels(by_month$month1) == "Jun 2016")
+pre_policy_end <- which(levels(by_month$month1) == "Sep 2018")
+post_policy_start <- which(levels(by_month$month1) == "Jun 2019")
+post_policy_end <- which(levels(by_month$month1) == "Sep 2021")
+
+fig6 <- ggplot(by_month, aes(x = month1, 
+                             y = percentage_per_month, 
+                             fill = status, 
+                             group = status)) +
+  geom_col(alpha = 0.75) +
+  geom_vline(aes(xintercept = policy_switch, linetype = "Policy Switch")) + 
+  labs(
+    x = "",
+    y = "% Exceptions at Transplant",
+    linetype = "",
+    fill = "status") +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, by = 20)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+        axis.title.x = element_text(margin = margin(t = 15, r = 0, b = 0, l = 0)),
+        legend.position = "none",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        legend.margin = margin(t=0, r=0, b=0, l=0, unit = "mm"),
+        legend.direction = "vertical",
+        legend.title.align = 0,
+        panel.background = element_rect(fill = "grey99"),
+        plot.background = element_rect(fill = "white"),
+        panel.border = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(size = 0.5, linetype = "solid", colour = "black")
+  ) +
+  scale_linetype_manual(values = c("dashed", "dotted", "solid")) +
+  scale_fill_custom(name = "Status",
+                    breaks = c("Active Exception at Time of Transplant"),
+                    palette = "reallysimple") +
+  guides(colour = guide_legend(nrow = 1)) +
+  annotate("text", x = which(levels(by_month$month1) == "Aug 2017"), y = 95, label= "Pre-Policy Cohort") +
+  annotate("text", x = which(levels(by_month$month1) == "Aug 2020"), y = 95, label= "Post-Policy Cohort") +
+  annotate("rect",
+           xmin = pre_policy_start,           
+           xmax = pre_policy_end,
+           ymin = 0, 
+           ymax = 100,  
+           alpha = 0.15) +
+  annotate("rect",
+           xmin = post_policy_start,            
+           xmax = post_policy_end,            
+           ymin = 0, 
+           ymax = 100, 
+           alpha = 0.15) 
+
+plot_grid(fig5, fig6,
+          ncol = 1, nrow = 2,
+          labels = c("A", "B"))
+
+```
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
