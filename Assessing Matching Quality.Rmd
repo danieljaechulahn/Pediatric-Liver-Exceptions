@@ -8,7 +8,9 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
 ```
 
-```{r matching_quality}
+Purpose of this RMD is to determine the quality of our exact matching schemes. For this, we used the cobalt package in R. First, we created Love Plots that visualize the Kolmogorov-Smirnov statistics as well as standardized mean differences pre- and post-exact matching. For both laboratory and allocation MELD/PELD scores, our statistics were 0 after matching, indicating identical distributions. These distributions can actually be seen in our balance plots, in the second chunk below.
+
+```{r matching_quality_statistics}
 v <- data.frame(old = c("Allocation_Score", "PELD_or_MELD", "Laboratory_Score"),
                 new = c("Allocation Score", "PELD or MELD", "Laboratory Score"))
 
@@ -28,6 +30,10 @@ love.plot(m.out1, stats = c("mean.diffs", "ks.statistics"),
           position = "top", shapes = c("circle", "triangle"),
           colors = c("green", "orange")) 
 
+```
+
+```{r matching_quality_distributions}
+
 match1 <- bal.plot(m.out, var.name = "Allocation_Score", which = "both",
           type = "density", mirror = TRUE) + 
           theme(legend.position = "none") +
@@ -37,8 +43,7 @@ match1 <- bal.plot(m.out, var.name = "Allocation_Score", which = "both",
 
 match2 <- bal.plot(m.out, var.name = "PELD_or_MELD", which = "both",
           type = "density", mirror = TRUE) + 
-          scale_fill_manual(name = "Exception Status", values = c("#ddd3bb", "#e49f62"), labels = c("Non-Exception", "Received 
-                                                                                                    Exception")) +
+          scale_fill_manual(name = "Exception Status", values = c("#ddd3bb", "#e49f62"), labels = c("Non-Exception", "Received Exception")) +
           scale_x_discrete(name = "PELD or MELD", labels = c("PELD", "MELD"))  +
           ggtitle("Distribution Pre/Post-Exact Matching by PELD or MELD")
 
@@ -52,8 +57,7 @@ match3 <- bal.plot(m.out1, var.name = "Laboratory_Score", which = "both",
 
 match4 <- bal.plot(m.out1, var.name = "PELD_or_MELD", which = "both",
           type = "density", mirror = TRUE) + 
-          scale_fill_manual(name = "Exception Status", values = c("#496061", "#8dd9d7"), labels = c("Non-Exception", "Received 
-                                                                                                    Exception")) +
+          scale_fill_manual(name = "Exception Status", values = c("#496061", "#8dd9d7"), labels = c("Non-Exception", "Received Exception")) +
           scale_x_discrete(name = "PELD or MELD", labels = c("PELD", "MELD")) +
           ggtitle("Distribution Pre/Post-Exact Matching by PELD or MELD")
 
@@ -65,25 +69,9 @@ plot_grid(match3, match4,
           ncol = 2, nrow = 1,
           labels = c("A", "B"))
 
+
 ```
 
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
-```
-
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
