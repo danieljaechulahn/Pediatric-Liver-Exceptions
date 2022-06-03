@@ -8,6 +8,8 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
 ```
 
+Here, I load in three files to set up the data for the mixed effects models. First is p1, which is the dataset of 2026 candidates. Next is stathist_liin, which has all status updates during candidates' time spent on the waitlist. This information includes whether patients had applied for a MELD/PELD exception. Last is mpexcept, which presents information on the status of the MELD/PELD exception applications (approval, denial, withdrawal, etc.) as well as the time periods when these exceptions are active. All three files are combined to set up a data file amenable for time-varying covariates of interest, including active non-standardized exception status as well as allocation MELD/PELD score. 
+
 ```{r model_setup}
 
 stathist <- stathist_liin %>% dplyr::select(c("PX_ID", "CANHX_BEGIN_DT", "CANHX_END_DT", 
@@ -35,49 +37,64 @@ mpexceptshort2 <- dplyr::select(mpexcept, c(
 ))
 
 forcox <- merge(p1, stathist, by = "PX_ID", all.x = TRUE)
-forcox <- merge(forcox, mpexceptshort2, by = "PX_ID", all.x = TRUE)
+forcox <- merge(forcox, mpexceptshort2, by = "PX_ID", all.x = TRUE) 
 
-forcox1.0 <- forcox %>% dplyr::select(c("PX_ID", "CAN_LISTING_DT", "CAN_REM_DT", "CAN_REM_CD", "POLICY_COHORT",
-                                        "CANHX_BEGIN_DT.x", "CANHX_END_DT.x", "CANHX_BEGIN_DT.y", "CANHX_END_DT.y", "SCORE", "LAB_SCORE",                                         "SCORE_DIFFERENCE", "REC_EXCEPTION", "DEATH", "DEATH_DT", "CAN_LISTING_CTR_ID",
-                                        "CANHX_EXC_FLG.y", "CANHX_EXC_SCORE.y", "CANHX_MPXCPT_APPL_TY.y",
-                                        "CANHX_MPXCPT_BEGIN_DT.y", "CANHX_MPXCPT_DGN.y",
-                                        "CANHX_MPXCPT_END_DT.y", "CANHX_MPXCPT_ORIG_APPL_DT.y", "CANHX_MPXCPT_REQUEST_SCORE.y",
-                                        "CANHX_MPXCPT_STAT.y", "CANHX_MPXCPT_STAT_DT.y", "CANHX_OPTN_LAB_MELD.y",     
-                                        "CANHX_SRTR_LAB_MELD.y", "CANHX_STAT_CD.y", "CAN_GENDER", "CAN_RACE", "CAN_AGE_AT_LISTING", 
-                                        "CAN_AGE_IN_MONTHS_AT_LISTING","CANHX_BILI", "CANHX_INR",
-                                        "CANHX_SERUM_CREAT", "CANHX_SERUM_SODIUM", "CANHX_DIAL_PRIOR_WEEK",
-                                        "CAN_LAST_ACT_STAT_DT.y")) %>%
-  group_by(PX_ID) %>% arrange(CANHX_BEGIN_DT.y, .by_group = TRUE) %>% 
-  filter(any(CANHX_EXC_FLG.y == 1)) %>% ungroup() %>% group_by(PX_ID, CANHX_BEGIN_DT.y) %>%
-  filter((CANHX_BEGIN_DT.y >= CANHX_MPXCPT_BEGIN_DT.y & CANHX_BEGIN_DT.y <= CANHX_MPXCPT_END_DT.y) & CANHX_MPXCPT_REQUEST_SCORE.y == CANHX_EXC_SCORE.y - 6200) %>%
-  mutate(
-    EXCEPTION = case_when(
-      CANHX_MPXCPT_STAT.y == 5 | CANHX_MPXCPT_STAT.y == 14 | CANHX_MPXCPT_STAT.y == 16 | CANHX_MPXCPT_STAT.y == 18 | CANHX_MPXCPT_STAT.y == 30 ~ 1,
-      TRUE ~ 0),
-    NEW_SCORE = case_when(
-      EXCEPTION == 1 ~ CANHX_EXC_SCORE.y - 6200,
-      TRUE ~ CANHX_SRTR_LAB_MELD.y - 6200),
-    NEW_SCORE_DIFFERENCE = NEW_SCORE - (CANHX_SRTR_LAB_MELD.y - 6200)) 
+cox1 <- forcox %>% dplyr::select(c("PX_ID", "CAN_LISTING_DT", "CAN_REM_DT", "CAN_REM_CD", "POLICY_COHORT",
+"CANHX_BEGIN_DT.x", "CANHX_END_DT.x", "CANHX_BEGIN_DT.y", "CANHX_END_DT.y", "SCORE", "LAB_SCORE", 
+"SCORE_DIFFERENCE", "REC_EXCEPTION", "DEATH", "DEATH_DT", "CAN_LISTING_CTR_ID", "CANHX_EXC_FLG.y", "CANHX_EXC_SCORE.y", "CANHX_MPXCPT_APPL_TY.y", "CANHX_MPXCPT_BEGIN_DT.y", "CANHX_MPXCPT_DGN.y", "CANHX_MPXCPT_END_DT.y", "CANHX_MPXCPT_ORIG_APPL_DT.y", "CANHX_MPXCPT_REQUEST_SCORE.y", "CANHX_MPXCPT_STAT.y", "CANHX_MPXCPT_STAT_DT.y", "CANHX_OPTN_LAB_MELD.y", "CANHX_SRTR_LAB_MELD.y", "CANHX_STAT_CD.y", "CAN_GENDER", "CAN_RACE", "CAN_AGE_AT_LISTING", "CAN_AGE_IN_MONTHS_AT_LISTING", "CANHX_BILI", "CANHX_INR", "CANHX_SERUM_CREAT", "CANHX_SERUM_SODIUM", "CANHX_DIAL_PRIOR_WEEK", "CAN_LAST_ACT_STAT_DT.y")) %>%
+  group_by(PX_ID) %>% filter(any(CANHX_EXC_FLG.y == 1)) %>% filter(CANHX_EXC_FLG.y == 1) %>% 
+  filter(CANHX_MPXCPT_STAT.y == 5 | CANHX_MPXCPT_STAT.y == 14 | CANHX_MPXCPT_STAT.y == 16 | CANHX_MPXCPT_STAT.y == 18 | CANHX_MPXCPT_STAT.y == 30) %>%
+  ungroup() %>% group_by(PX_ID, CANHX_BEGIN_DT.y) %>% arrange(PX_ID, CANHX_BEGIN_DT.y) %>%
+  filter((CANHX_BEGIN_DT.y >= CANHX_MPXCPT_BEGIN_DT.y & CANHX_END_DT.y <= CANHX_MPXCPT_END_DT.y) |
+           abs(as.numeric(difftime(CANHX_BEGIN_DT.y, CANHX_MPXCPT_BEGIN_DT.y, units = "days"))) <= 5 |
+           abs(as.numeric(difftime(CANHX_END_DT.y, CANHX_MPXCPT_END_DT.y, units = "days"))) <= 5) %>%
+  mutate(ACTIVE = 1,
+         EXCEPTION = 1,
+         NEW_SCORE = CANHX_EXC_SCORE.y - 6200,
+         NEW_SCORE_DIFFERENCE = NEW_SCORE - (CANHX_SRTR_LAB_MELD.y - 6200))
 
-forcox1.1 <- forcox1.0 %>% ungroup() %>% group_by(PX_ID) %>% arrange(CANHX_BEGIN_DT.y) %>% slice_tail(n = 1) %>% filter(DEATH == 1) %>% 
+cox1.1 <- forcox3.0 %>% ungroup() %>% group_by(PX_ID) %>% arrange(CANHX_BEGIN_DT.y) %>% slice_tail(n = 1) %>% filter(DEATH == 1) %>% 
   filter(abs(as.numeric(difftime(DEATH_DT, CANHX_END_DT.y, units = "days"))) != 0) %>%
   mutate(CANHX_BEGIN_DT.y = CANHX_END_DT.y + 1) %>% mutate(CANHX_END_DT.y = DEATH_DT)
 
+cox2 <- forcox %>% dplyr::select(c("PX_ID", "CAN_LISTING_DT", "CAN_REM_DT", "CAN_REM_CD", "POLICY_COHORT",
+"CANHX_BEGIN_DT.x", "CANHX_END_DT.x", "CANHX_BEGIN_DT.y", "CANHX_END_DT.y", "SCORE", "LAB_SCORE", 
+"SCORE_DIFFERENCE", "REC_EXCEPTION", "DEATH", "DEATH_DT", "CAN_LISTING_CTR_ID", "CANHX_EXC_FLG.y", "CANHX_EXC_SCORE.y", "CANHX_MPXCPT_APPL_TY.y", "CANHX_MPXCPT_BEGIN_DT.y", "CANHX_MPXCPT_DGN.y", "CANHX_MPXCPT_END_DT.y", "CANHX_MPXCPT_ORIG_APPL_DT.y", "CANHX_MPXCPT_REQUEST_SCORE.y", "CANHX_MPXCPT_STAT.y", "CANHX_MPXCPT_STAT_DT.y", "CANHX_OPTN_LAB_MELD.y", "CANHX_SRTR_LAB_MELD.y", "CANHX_STAT_CD.y", "CAN_GENDER", "CAN_RACE", "CAN_AGE_AT_LISTING", "CAN_AGE_IN_MONTHS_AT_LISTING", "CANHX_BILI", "CANHX_INR", "CANHX_SERUM_CREAT", "CANHX_SERUM_SODIUM", "CANHX_DIAL_PRIOR_WEEK", "CAN_LAST_ACT_STAT_DT.y")) %>%
+  group_by(PX_ID) %>% filter(any(CANHX_EXC_FLG.y == 1)) %>% filter(CANHX_EXC_FLG.y == 1) %>%
+  ungroup() %>% group_by(PX_ID, CANHX_BEGIN_DT.y) %>% arrange(PX_ID, CANHX_BEGIN_DT.y) %>%
+  slice_head(n = 1) %>% mutate(ACTIVE = 0,
+                               EXCEPTION = 0,
+                               NEW_SCORE = CANHX_SRTR_LAB_MELD.y - 6200,
+                               NEW_SCORE_DIFFERENCE = NEW_SCORE - (CANHX_SRTR_LAB_MELD.y - 6200))
 
-forcox1.2 <- forcox %>% dplyr::select(c("PX_ID", "CAN_LISTING_DT", "CAN_REM_DT", "CAN_REM_CD", "POLICY_COHORT",
-                                        "CANHX_BEGIN_DT.x", "CANHX_END_DT.x", "CANHX_BEGIN_DT.y", "CANHX_END_DT.y", "SCORE", 
-                                        "LAB_SCORE", "SCORE_DIFFERENCE", "REC_EXCEPTION", "DEATH", "DEATH_DT", "CAN_LISTING_CTR_ID",
-                                        "CANHX_EXC_FLG.y", "CANHX_EXC_SCORE.y", "CANHX_MPXCPT_APPL_TY.y",
-                                        "CANHX_MPXCPT_BEGIN_DT.y", "CANHX_MPXCPT_DGN.y",
-                                        "CANHX_MPXCPT_END_DT.y", "CANHX_MPXCPT_ORIG_APPL_DT.y", "CANHX_MPXCPT_REQUEST_SCORE.y",
-                                        "CANHX_MPXCPT_STAT.y", "CANHX_MPXCPT_STAT_DT.y", "CANHX_OPTN_LAB_MELD.y", 
-                                        "CANHX_SRTR_LAB_MELD.y", "CANHX_STAT_CD.y", "CAN_GENDER", "CAN_RACE", "CAN_AGE_AT_LISTING", 
-                                        "CAN_AGE_IN_MONTHS_AT_LISTING", "CANHX_BILI", "CANHX_INR",
-                                        "CANHX_SERUM_CREAT", "CANHX_SERUM_SODIUM", "CANHX_DIAL_PRIOR_WEEK",
-                                        "CAN_LAST_ACT_STAT_DT.y")) %>% 
-  group_by(PX_ID) %>% filter(all(CANHX_EXC_FLG.y == 0)) %>% ungroup() %>% group_by(PX_ID, CANHX_BEGIN_DT.y) %>% 
+cox2.1 <- forcox3.1 %>% ungroup() %>% group_by(PX_ID) %>% arrange(CANHX_BEGIN_DT.y) %>% slice_tail(n = 1) %>% filter(DEATH == 1) %>% 
+  filter(abs(as.numeric(difftime(DEATH_DT, CANHX_END_DT.y, units = "days"))) != 0) %>%
+  mutate(CANHX_BEGIN_DT.y = CANHX_END_DT.y + 1) %>% mutate(CANHX_END_DT.y = DEATH_DT)
+
+cox3 <- forcox %>% dplyr::select(c("PX_ID", "CAN_LISTING_DT", "CAN_REM_DT", "CAN_REM_CD", "POLICY_COHORT",
+"CANHX_BEGIN_DT.x", "CANHX_END_DT.x", "CANHX_BEGIN_DT.y", "CANHX_END_DT.y", "SCORE", "LAB_SCORE", 
+"SCORE_DIFFERENCE", "REC_EXCEPTION", "DEATH", "DEATH_DT", "CAN_LISTING_CTR_ID", "CANHX_EXC_FLG.y", "CANHX_EXC_SCORE.y", "CANHX_MPXCPT_APPL_TY.y", "CANHX_MPXCPT_BEGIN_DT.y", "CANHX_MPXCPT_DGN.y", "CANHX_MPXCPT_END_DT.y", "CANHX_MPXCPT_ORIG_APPL_DT.y", "CANHX_MPXCPT_REQUEST_SCORE.y", "CANHX_MPXCPT_STAT.y", "CANHX_MPXCPT_STAT_DT.y", "CANHX_OPTN_LAB_MELD.y", "CANHX_SRTR_LAB_MELD.y", "CANHX_STAT_CD.y", "CAN_GENDER", "CAN_RACE", "CAN_AGE_AT_LISTING", "CAN_AGE_IN_MONTHS_AT_LISTING", "CANHX_BILI", "CANHX_INR", "CANHX_SERUM_CREAT", "CANHX_SERUM_SODIUM", "CANHX_DIAL_PRIOR_WEEK", "CAN_LAST_ACT_STAT_DT.y")) %>%
+  group_by(PX_ID) %>% filter(any(CANHX_EXC_FLG.y == 1)) %>% filter(CANHX_EXC_FLG.y == 0) %>% 
+  ungroup() %>% group_by(PX_ID, CANHX_BEGIN_DT.y) %>% arrange(PX_ID, CANHX_BEGIN_DT.y) %>%
+  slice_head(n = 1) %>% mutate(ACTIVE = 0,
+                               EXCEPTION = 0,
+                               NEW_SCORE = CANHX_SRTR_LAB_MELD.y - 6200,
+                               NEW_SCORE_DIFFERENCE = NEW_SCORE - (CANHX_SRTR_LAB_MELD.y - 6200))
+
+cox3.1 <- forcox3.2 %>% ungroup() %>% group_by(PX_ID) %>% arrange(CANHX_BEGIN_DT.y) %>% slice_tail(n = 1) %>% filter(DEATH == 1) %>% 
+  filter(abs(as.numeric(difftime(DEATH_DT, CANHX_END_DT.y, units = "days"))) != 0) %>%
+  mutate(CANHX_BEGIN_DT.y = CANHX_END_DT.y + 1) %>% mutate(CANHX_END_DT.y = DEATH_DT)
+
+cox4 <- do.call("rbind", list(cox1, cox1.1, cox2, cox2.1, cox3, cox3.1)) %>%
+  ungroup() %>% group_by(PX_ID, CANHX_BEGIN_DT.y) %>% arrange(ACTIVE) %>% slice_tail(n = 1)
+
+cox5 <- forcox %>% dplyr::select(c("PX_ID", "CAN_LISTING_DT", "CAN_REM_DT", "CAN_REM_CD", "POLICY_COHORT",
+"CANHX_BEGIN_DT.x", "CANHX_END_DT.x", "CANHX_BEGIN_DT.y", "CANHX_END_DT.y", "SCORE", "LAB_SCORE", 
+"SCORE_DIFFERENCE", "REC_EXCEPTION", "DEATH", "DEATH_DT", "CAN_LISTING_CTR_ID", "CANHX_EXC_FLG.y", "CANHX_EXC_SCORE.y", "CANHX_MPXCPT_APPL_TY.y", "CANHX_MPXCPT_BEGIN_DT.y", "CANHX_MPXCPT_DGN.y", "CANHX_MPXCPT_END_DT.y", "CANHX_MPXCPT_ORIG_APPL_DT.y", "CANHX_MPXCPT_REQUEST_SCORE.y", "CANHX_MPXCPT_STAT.y", "CANHX_MPXCPT_STAT_DT.y", "CANHX_OPTN_LAB_MELD.y", "CANHX_SRTR_LAB_MELD.y", "CANHX_STAT_CD.y", "CAN_GENDER", "CAN_RACE", "CAN_AGE_AT_LISTING", "CAN_AGE_IN_MONTHS_AT_LISTING", "CANHX_BILI", "CANHX_INR", "CANHX_SERUM_CREAT", "CANHX_SERUM_SODIUM", "CANHX_DIAL_PRIOR_WEEK", "CAN_LAST_ACT_STAT_DT.y")) %>% 
+  group_by(PX_ID) %>% filter(all(CANHX_EXC_FLG.y == 0)) %>% ungroup() %>% group_by(PX_ID, CANHX_BEGIN_DT.y) %>%
   arrange(PX_ID, CANHX_BEGIN_DT.y) %>% slice_tail(n = 1) %>%
   mutate(
+    ACTIVE = 0,
     EXCEPTION = case_when(
       !is.na(CANHX_EXC_SCORE.y) ~ 1,
       TRUE ~ 0),
@@ -86,16 +103,16 @@ forcox1.2 <- forcox %>% dplyr::select(c("PX_ID", "CAN_LISTING_DT", "CAN_REM_DT",
       TRUE ~ CANHX_SRTR_LAB_MELD.y - 6200),
     NEW_SCORE_DIFFERENCE = NEW_SCORE - (CANHX_SRTR_LAB_MELD.y - 6200)) 
 
-forcox1.3 <- forcox1.2 %>% ungroup() %>% group_by(PX_ID) %>% arrange(CANHX_BEGIN_DT.y) %>% slice_tail(n = 1) %>% filter(DEATH == 1) %>% 
+cox5.1 <- cox5 %>% ungroup() %>% group_by(PX_ID) %>% arrange(CANHX_BEGIN_DT.y) %>% slice_tail(n = 1) %>% filter(DEATH == 1) %>% 
   filter(abs(as.numeric(difftime(DEATH_DT, CANHX_END_DT.y, units = "days"))) != 0) %>%
   mutate(CANHX_BEGIN_DT.y = CANHX_END_DT.y + 1) %>% mutate(CANHX_END_DT.y = DEATH_DT)
 
-forcox2 <- do.call("rbind", list(forcox1.0, forcox1.1, forcox1.2, forcox1.3)) %>%
+cox6 <- do.call("rbind", list(cox4, cox5, cox5.1)) %>%
   mutate(NEW_DEATH = case_when(
     DEATH == 1 & abs(as.numeric(difftime(DEATH_DT, CANHX_END_DT.y, units = "days"))) == 0 ~ 1,
     TRUE ~ 0))
 
-forcoxfinal <- forcox2 %>% group_by(PX_ID) %>% arrange(CANHX_BEGIN_DT.y) %>%
+forcoxfinal <- new %>% group_by(PX_ID) %>% arrange(CANHX_BEGIN_DT.y) %>%
   mutate(TIME1 = as.numeric(difftime(CANHX_BEGIN_DT.y, CAN_LISTING_DT, units = "days")),
          TIME2 = as.numeric(difftime(CANHX_END_DT.y, CAN_LISTING_DT, units = "days")) + 1,
          TIME2 = case_when(
@@ -128,21 +145,23 @@ forcoxfinal <- forcox2 %>% group_by(PX_ID) %>% arrange(CANHX_BEGIN_DT.y) %>%
 
 ```
 
+Purpose of model 1 is to identify hazard ratio associated with active non-standardized exception status.
 ```{r model1}
 
-myfit <- coxme(Surv(TIME1, TIME2, NEW_DEATH) ~ NEW_SCORE_DIFFERENCE + NEW_SCORE + race + sex + agegroup + (1 | CAN_LISTING_CTR_ID), data = forcoxfinal)
-summary(myfit)
+model1 <- coxme(Surv(TIME1, TIME2, NEW_DEATH) ~ NEW_SCORE + EXCEPTION + race + sex + agegroup + (1 | CAN_LISTING_CTR_ID), data = forcoxfinal)
+tab_model(model1)
 
 
 ```
 
+Purpose of model 2 is to identify hazard ratio associated with every point increase that a patient receives over their laboratory MELD/PELD score due to an active non-standardized exception.
 ```{r model2}
-
-myfit1 <- coxme(Surv(TIME1, TIME2, NEW_DEATH) ~ NEW_SCORE + EXCEPTION + race + sex + agegroup + (1 | CAN_LISTING_CTR_ID), data = forcoxfinal)
-tab_model(myfit1)
+model2 <- coxme(Surv(TIME1, TIME2, NEW_DEATH) ~ NEW_SCORE_DIFFERENCE + NEW_SCORE + race + sex + agegroup + (1 | CAN_LISTING_CTR_ID), data = forcoxfinal)
+tab_model(model2)
 
 ```
 
+Here, we ran model 1 again, but stratified by policy cohort to determine whether non-standardized exceptions were still associated with a significant difference in mortality risk after the NLRB's implementation.
 ```{r pre_and_post_cox}
 
 coxpostpolicy <- filter(forcoxfinal, POLICY_COHORT == "Post-Policy")
@@ -155,25 +174,3 @@ postmodel <- coxme(Surv(TIME1, TIME2, NEW_DEATH) ~ NEW_SCORE + EXCEPTION + race 
 summary(postmodel)
 
 ```
-
-
-
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
-```
-
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

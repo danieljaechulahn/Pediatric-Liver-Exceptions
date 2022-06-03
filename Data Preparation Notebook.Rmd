@@ -8,6 +8,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
 ```
 
+Here, we load in the necessary libraries in R.
 ```{r library}
 library(tidyverse)
 library(survival)
@@ -41,23 +42,28 @@ library(transplantr)
 
 # Data Sources
 
-We uploaded all the necessary files from the SRTR Standard Analysis Files (2021 Q4).
+We uploaded all the necessary files from the SRTR Standard Analysis Files (2021 Q4). 
 
 ```{r data_read_in}
 
+#information about candidates added to the liver waitlist. 
 cand_liin <- read_sas("cand_liin.sas7bdat", NULL)
 
+#information about candidates added to the heart and lung waitlists. this was necessary for identifying patients on multiple organ waitlists.
 cand_thor <- read_sas("cand_thor.sas7bdat", NULL)
 
+#information about candidates added to the kidney and pancreas waitlists. this was necessary for identifying patients on multiple organ waitlists.
 cand_kipa <- read_sas("cand_kipa.sas7bdat", NULL)
 
+#information about MELD and PELD exceptions that have been submitted
 mpexcept <- read_sas("mpexcept.sas7bdat", NULL)
 
+#all status updates throughout a candidate's time spent on the liver transplant waitlist
 stathist_liin <- read_sas("stathist_liin.sas7bdat", NULL)
 
 ```
 
-```{r}
+```{r data_cleaning}
 
 candliverset <- cand_liin
 
@@ -88,6 +94,7 @@ childrenset <- filter(childrenset, CAN_INIT_ACT_STAT_CD != 6010 &
 
 ```
 
+Here, we removed all candidates who were listed were multiple organs within 21 days of listing on the liver waitlist as well as those who were simultaneously listed at numerous sites for liver.
 ```{r}
 thor <- dplyr::select(cand_thor, "PX_ID", "PERS_ID", "CAN_LISTING_DT", "CAN_REM_DT", "WL_ORG", "CAN_LISTING_CTR_ID", "CAN_REM_CD")
 
@@ -475,6 +482,10 @@ p1 <- p1 %>% mutate(
 levels(p1$PELD_or_MELD) <- c("PELD", "MELD")
 ```
 
+Above is the final dataset of 2026 candidates added to the liver waitlist after all exclusion criteria. The dataset is entitled "p1."
+
+Below is the code chunk for exact matching by allocation and labortory MELD/PELD. 
+
 ```{r exact_matching}
 m.out = matchit(REC_EXCEPTION ~ Allocation_Score + PELD_or_MELD,
                 data = p1, method = "exact",
@@ -514,24 +525,3 @@ matched_by_laboratory$KMSTRATA <- factor(matched_by_laboratory$KMSTRATA,
                                                     "Propensity-Matched by Laboratory MELD/PELD"))
 
 ```
-
-
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
-```
-
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
