@@ -10,6 +10,7 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
 
 Here, we used the hmisc package in R to estimate the Harell's c-indices for laboratory and allocation MELD/PELD scores in rank-ordering candidates by pre-transplant mortality risk. 
 
+
 ```{r c_index}
 
 #allocation_c_boostrap is the function for determining the c-index of allocation MELD/PELD.
