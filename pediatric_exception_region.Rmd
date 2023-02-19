@@ -1,0 +1,315 @@
+---
+title: "Regional Variation in Pediatric Exceptions"
+author: "Sharon Zeng"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(haven)
+library(geodist)
+library(purrr)
+library(ggmap)
+library(tidycensus)
+library(tigris)
+library(sf)
+library(usa)
+library(ggspatial)
+library(beepr)
+library(censusxy)
+library(tidygeocoder)
+library(geosphere)
+library(ggalt)
+library(ggsci)
+library(ggthemes)
+library(ggrepel)
+library(ggpubr)
+library(RColorBrewer)
+library(kableExtra)
+library(weights)
+library(gridExtra)
+library(ggpubr)
+library(grid)
+```
+
+```{r data cleaning, include = FALSE}
+
+# centers with geocodes
+center_long_lat <- read_csv("center_geocodes.csv") %>%
+  rename(long = lon, CTR_NAME = ENTIRE_NAME) %>%
+  mutate(CAN_LISTING_CTR_ID = CTR_ID)
+
+# clean up NA and incorrectly coded regions
+
+institution <- haven::read_sas("institution.sas7bdat")
+
+opo_id_to_name <-  institution %>%
+  filter(CTR_TY %in% c("FOP", "IO1", "OP1")) %>%
+  select(CTR_CD, CTR_ID) %>%
+  rename(OPO = CTR_ID)
+
+opo2region <- institution %>%
+  select(CTR_CD, CTR_ID, REGION)
+
+load("opo_shapes.R") 
+
+opo_shapes <- opo_shapes %>%
+  rename(CTR_CD = OPO)
+
+region_shapes <- inner_join(opo_shapes, opo2region) %>%
+  group_by(REGION) %>% summarise(estimate = sum(estimate), do_union = TRUE)
+
+regionstatekey <- read_csv("regionstatekey.csv") %>%
+  select(1,2)
+regionstatekey$PRIMARY_STATE <-  state.abb[match(regionstatekey$State,state.name)]
+
+df <- read_csv("PediatricExceptionData.csv") %>%
+  select(-1) %>%
+  left_join(center_long_lat) %>%
+  # clean up regions
+  left_join(opo2region) %>%
+  mutate(POLICY_COHORT = factor(POLICY_COHORT, levels = c("Pre-Policy", "Between", "Post-Policy")))
+
+df_by_ctr <- df %>%
+  group_by(CANHX_MPXCPT_REGION, CTR_ID, POLICY_COHORT) %>%
+  summarise(total_cand = n(), exceptions = sum(REC_EXCEPTION), mean_score_diff = mean(SCORE_DIFFERENCE, na.rm = TRUE)) %>%
+  left_join(center_long_lat %>% select(-CAN_LISTING_CTR_ID))
+
+# get state shapefiles
+
+# states <- get_acs(geography = "state", variable = "B01001_001", year = 2019, geometry = TRUE)
+# #
+# save(file = "states.R", states)
+# 
+load("states.R")
+
+states <- states %>%
+  select(-variable, -estimate, -moe, -GEOID) %>%
+  rename(PRIMARY_STATE = NAME)
+
+states$PRIMARY_STATE = state.abb[match(states$PRIMARY_STATE,state.name)]
+
+states <- states %>%
+  filter(PRIMARY_STATE != "AK" & PRIMARY_STATE != "HI" & PRIMARY_STATE != "PR")
+
+# create expanded dataset for graphing
+expand <- states %>% 
+  left_join(df) %>%
+  expand(PRIMARY_STATE, POLICY_COHORT) %>%
+  filter(is.na(POLICY_COHORT) == FALSE) %>%
+  # Vermont is split between regions 1 and 9, randomly assigned to 1 because it doesn't show up in the actual dataset
+  left_join(regionstatekey) %>%
+  mutate(Region = case_when(PRIMARY_STATE == "VT" ~ 1,
+                            TRUE ~ Region)) %>%
+  select(-State)
+
+df_by_region <- df %>% 
+  group_by(REGION, PRIMARY_STATE, POLICY_COHORT) %>%
+  summarise(total_cand = n(), exceptions = sum(REC_EXCEPTION), totalscorediff = sum(SCORE_DIFFERENCE, na.rm = TRUE)) %>%
+  group_by(REGION, POLICY_COHORT) %>%
+  mutate(region_exceptions = sum(exceptions), region_cand = sum(total_cand), mean_score_diff = sum(totalscorediff, na.rm = TRUE)/sum(exceptions)) %>%
+  mutate(region_proportion = region_exceptions/region_cand)
+  
+```
+
+# Proportion of Exceptions at Time of Listing by Region
+
+```{r region map}
+
+regionmapproportion <- ggplot(df_by_region %>% filter(POLICY_COHORT != "Between") %>% left_join(region_shapes)) +
+  geom_sf(aes(fill = region_proportion, geometry = geometry), size = 0.2) +
+  facet_wrap(vars(POLICY_COHORT), nrow = 2) +
+  scale_fill_viridis_c(limits = c(0, 0.4)) +
+  theme_void() +
+  labs(fill = "Proportion of Candidates\nwith Exception") +
+  theme(title = element_text(size = 10))
+
+regionmapproportion
+
+ggsave("regionmapproportion.png", regionmapproportion)
+```
+
+## Score Difference at Time of Listing by Region
+
+```{r region map score diff}
+
+regionmapscorediff <- ggplot(df_by_region %>% filter(POLICY_COHORT != "Between") %>% left_join(region_shapes)) +
+  geom_sf(aes(fill = mean_score_diff, geometry = geometry), size = 0.2) +
+  facet_wrap(vars(POLICY_COHORT), nrow = 2) +
+  scale_fill_viridis_c(limits = c(0, 38)) +
+  theme_void() +
+  labs(fill = "Mean Score Difference") +
+  theme(title = element_text(size = 10))
+
+regionmapscorediff
+
+ggsave("regionmapscorediff.png", regionmapscorediff)
+```
+
+
+# Proportion of Exceptions at Time of Listing by State
+
+```{r state map}
+df_by_state <- df %>% 
+  group_by(PRIMARY_STATE, POLICY_COHORT) %>%
+  summarise(total_cand = n(), exceptions = sum(REC_EXCEPTION), mean_score_diff = mean(SCORE_DIFFERENCE, na.rm = TRUE)) %>%
+  right_join(expand)
+  
+statemapproportion <- states %>%
+  left_join(df_by_state) %>%
+  filter(POLICY_COHORT != "Between") %>%
+  ggplot() +
+  geom_sf(aes(fill = exceptions/total_cand), color = NA) +
+  facet_wrap(vars(POLICY_COHORT), nrow = 3) +
+  scale_fill_viridis_c(na.value = "grey90", limits = c(0, 0.55)) +
+  theme_void() +
+  labs(fill = "Exceptions/Candidates by State") +
+  theme(title = element_text(size = 10))
+
+statemapproportion
+
+ggsave("statemapproportion.png", statemapproportion)
+
+```
+
+## Score Difference at Time of Listing by State
+
+```{r state map score diff}
+
+statemapscorediff <- states %>%
+  left_join(df_by_state) %>%
+  filter(POLICY_COHORT != "Between") %>%
+  ggplot() +
+  geom_sf(aes(fill = mean_score_diff), color = NA) +
+  facet_wrap(vars(POLICY_COHORT), nrow = 3) +
+  scale_fill_viridis_c(na.value = "grey90", limits = c(0, 42)) +
+  theme_void() +
+  labs(fill = "Mean Score Difference by State") +
+  theme(title = element_text(size = 10))
+
+statemapscorediff
+
+ggsave("statemapscorediff.png", statemapscorediff)
+
+```
+
+\newpage
+
+```{r bar graph}
+
+barproportion <- df_by_region %>%
+  distinct(REGION, POLICY_COHORT, region_proportion) %>%
+  filter(POLICY_COHORT != "Between") %>%
+  mutate(REGION = factor(REGION, levels = c(1:11))) %>%
+  ggplot() +
+  geom_col(aes(x = REGION, y = region_proportion, fill = POLICY_COHORT), position = position_dodge(width = 0.67), alpha = 0.9) +
+  labs(fill = "Cohort", y = "Proportion of Exception Candidates", x = "Region",
+       title = "Proportion of Candidates with Exceptions")
+
+barproportion
+
+ggsave("barproportion.png", barproportion)
+
+```
+
+
+```{r bar score diff}
+
+barscorediff <- df_by_region %>%
+  distinct(REGION, POLICY_COHORT, mean_score_diff) %>%
+  filter(POLICY_COHORT != "Between") %>%
+  mutate(REGION = factor(REGION, levels = c(1:11))) %>%
+  ggplot() +
+  geom_col(aes(x = REGION, y = mean_score_diff, fill = POLICY_COHORT), position = position_dodge(width = 0.67), alpha = 0.9) +
+  labs(fill = "Cohort", y = "Mean Score Difference", x = "Region",
+       title = "Mean Score Difference")
+
+barscorediff
+
+ggsave("barscorediff.png", barscorediff)
+
+```
+
+\newpage
+
+# Association between Region and Likelihood of Exception at Time of Listing
+
+$\ln(\frac{P}{1-P})=\beta_0+\beta_{Region1}x_1+\beta_{Region2}x_2+...$
+
+Analyzed in pre- and post-policy periods with Region 8 (CO, IA, KS, MO, NE, WY) as reference as it is close to the mean of exceptions/candidates)
+
+```{r image-ref-for-in-text, echo = FALSE, message=FALSE, fig.align='center', fig.cap='UNOS Region Map', out.width='0.75\\linewidth', fig.pos='H'}
+knitr::include_graphics("./OPTN-UNOS-regional-map.png")
+```
+
+https://unos.org/community/regions/
+
+\newpage
+
+## Pre-Policy
+
+```{r regression pre}
+
+df_lm <- df %>%
+  mutate(REGION = factor(REGION, levels = c(8, 1:7, 9:11))) %>%
+  filter(POLICY_COHORT != "Between")
+
+exceptionproportion_pre <- glm(REC_EXCEPTION ~ REGION, data = (df_lm %>% filter(POLICY_COHORT == "Pre-Policy")), family = "binomial")
+
+summary(exceptionproportion_pre)
+
+```
+
+\newpage
+
+## Post-Policy
+
+```{r regression post}
+
+exceptionproportion_post <- glm(REC_EXCEPTION ~ REGION, data = (df_lm %>% filter(POLICY_COHORT == "Post-Policy")), family = "binomial")
+
+summary(exceptionproportion_post)
+
+```
+
+\newpage
+
+# Association between Region and Score Difference at Time of Listing
+
+$Y=\beta_0+\beta_{Region1}x_1+\beta_{Region2}x_2+...$
+
+```{r unos map 2, echo = FALSE, message=FALSE, fig.align='center', fig.cap='UNOS Region Map', out.width='0.75\\linewidth', fig.pos='H'}
+knitr::include_graphics("./OPTN-UNOS-regional-map.png")
+```
+
+https://unos.org/community/regions/
+
+\newpage
+
+## Pre-Policy
+
+```{r score diff regression pre}
+
+df_lm_scorediff <- df %>%
+  mutate(REGION = factor(REGION, levels = c(3, 1, 2, 4:11))) %>%
+  filter(POLICY_COHORT != "Between")
+
+scorediff_pre <- lm(SCORE_DIFFERENCE ~ REGION, data = (df_lm_scorediff %>% filter(POLICY_COHORT == "Pre-Policy")))
+
+summary(scorediff_pre)
+
+```
+
+\newpage
+
+## Post-Policy
+
+```{r score diff regression post}
+
+scorediff_post <- lm(SCORE_DIFFERENCE ~ REGION, data = (df_lm_scorediff %>% filter(POLICY_COHORT == "Post-Policy")))
+
+summary(scorediff_post)
+
+```
+
