@@ -7,7 +7,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
 ```
 
-This RMD contains the code for the 4 figures included in the main manuscript text. 
+This RMD contains the code for the figures 2, 3, and 5 included in the main manuscript text. 
 
 This code is for making custom functions for color schemes that will be used in the figures later.
 ```{r color_schemes}
@@ -69,7 +69,7 @@ scale_fill_custom <- function(palette = "mixed", discrete = TRUE, reverse = FALS
 
 ```
 
-```{r fig1}
+```{r fig2}
 exceptions <- filter(p1, REC_EXCEPTION == 1)
 d1 <- p1 %>%
   mutate(
@@ -113,102 +113,34 @@ ggplot(data = d1, aes(x = newscore)) +
   guides(fill = guide_legend(nrow = 3))
 ```
 
-```{r fig2}
-
-survplot1 <-
-  ggsurvplot(
-  fit = survfit(Surv(SURVIVAL_TIME, DEATH) ~ KMSTRATA, data = matched_by_allocation),
-  pval = TRUE, 
-  pval.coord = c(0, 0.76),
-  conf.int = FALSE,
-  risk.table = TRUE, 
-  risk.table.col = "strata",
-  xlim = c(0, 180),
-  xlab = "Time after Listing in Days",
-  break.time.by = 45,
-  ylim = c(0.75, 1),
-  ylab = "Survival Probability",
-  censor = TRUE,
-  legend.labs = c("Exceptions", "Non-Exceptions (Matched by Allocation Score)"),
-  risk.table.y.text.col = T, 
-  risk.table.y.text = FALSE,
-  palette = c("#660000", "#b8a370")
-) + 
-  guides(colour = guide_legend(nrow = 2)) 
-
-survplot2 <- 
-  ggsurvplot(
-  fit = survfit(Surv(SURVIVAL_TIME, DEATH) ~ KMSTRATA, data = matched_by_laboratory),
-  pval = TRUE, 
-  pval.coord = c(0, 0.76),
-  conf.int = FALSE,
-  risk.table = TRUE, 
-  risk.table.col = "strata",
-  xlim = c(0, 180),
-  xlab = "Time after Listing in Days",
-  break.time.by = 45,
-  ylim = c(0.75, 1),
-  ylab = "Survival Probability",
-  censor = TRUE,
-  legend.labs = c("Exceptions", "Non-Exceptions (Matched by Laboratory Score)"),
-  risk.table.y.text.col = T, 
-  risk.table.y.text = FALSE,
-  palette = c("#660000", "#e49f62")
-) + 
-  guides(colour = guide_legend(nrow = 2)) 
-
-kmplots <- list()
-kmplots[[1]] <- survplot1
-kmplots[[2]] <- survplot2
-kmplots[[1]]$plot <- kmplots[[1]]$plot + labs(tag="A")
-kmplots[[2]]$plot <- kmplots[[2]]$plot + labs(tag="B")
-
-arrange_ggsurvplots(kmplots, print = TRUE,
-                    ncol = 2, nrow = 1)
-
-#The code below is for identifying the 180-day survival rates.
-summary(survfit(Surv(SURVIVAL_TIME, DEATH) ~ KMSTRATA, data = matched_by_allocation), times = 180)
-summary(survfit(Surv(SURVIVAL_TIME, DEATH) ~ KMSTRATA, data = matched_by_laboratory), times = 180)
-
-```
 
 ```{r fig3}
+matched_by_allocation$REC_EXCEPTION <- as.factor(matched_by_allocation$REC_EXCEPTION)
+matched_by_allocation$removaltype <- as.factor(matched_by_allocation$removaltype)
+levels(matched_by_allocation$removaltype) <- c("On List", "Death", "Transplant")
+levels(matched_by_allocation$REC_EXCEPTION) <- c("No Exception, Matched by Allocation Score", "Exception")
 
-cif <- cuminc(ftime = matched_by_allocation$TIME_TO_REMOVAL, 
-              fstatus = matched_by_allocation$removaltype, 
-              group = matched_by_allocation$REC_EXCEPTION, 
-              cencode = 0)
-
-cif[["Tests"]]
-timepoints(cif, 180)
-
-ciplotdata <-
-  cif %>%
-  list_modify("Tests" = NULL) %>%
-  map_df(`[`, c("time", "est"), .id = "id") %>%
-  mutate(id = recode(
-    id,
-    "0 1" = "No Exception, Matched by Allocation Score:Death",
-    "0 2" = "No Exception, Matched by Allocation Score:Transplant",
-    "1 1" = "Exception:Death",
-    "1 2" = "Exception:Transplant")
-  ) %>%
-  tidyr::separate(id, c("REC_EXCEPTION", "removaltype"), ":")
-
-cifplot <- ggplot(ciplotdata, aes(x = time, y = est, color = removaltype)) +
-  geom_step(lwd = 1.2, aes(linetype = REC_EXCEPTION))  +
-  ylim(c(0, 1)) +
-  coord_cartesian(xlim=c(0, 180)) + 
+newfx <- survfit2(Surv(TIME_TO_REMOVAL, removaltype) ~ REC_EXCEPTION, data = matched_by_allocation) %>%
+  ggcuminc(
+    outcome = c("Death", "Transplant")) + 
+  palette = c("#660000", "#e49f62") +
+  add_confidence_interval() +
+  coord_cartesian(xlim = c(0, 180)) +
   scale_x_continuous(breaks = c(0, 60, 120, 180)) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    labels = scales::percent, 
+    expand = c(0.01, 0)
+  ) +
+  xlab("Days after Listing") +
   theme_classic() +
   guides(linetype=guide_legend(nrow=2, byrow=TRUE)) +
   guides(color=guide_legend(nrow=2, byrow=TRUE)) +
-  theme(plot.title = element_text(size = 14),
+  ggtitle("A") +
+  theme(plot.title = element_text(size = 18),
         legend.title = element_blank(),
         legend.position = "bottom") +
-  labs(x = "Days after Listing", 
-       y = "Cumulative Incidence") +
-  annotate("text", x = 0, y = 1, hjust = 0,
+  annotate("text", x = 0, y = 0.95, hjust = 0,
            label = paste0(
              "Death p: ", 
              ifelse(cif$Tests[1, 2] < .001, 
@@ -221,56 +153,44 @@ cifplot <- ggplot(ciplotdata, aes(x = time, y = est, color = removaltype)) +
                     "< 0.001", 
                     round(cif$Tests[2, 2], 2)))) 
 
-cif1 <- cuminc(ftime = matched_by_laboratory$TIME_TO_REMOVAL, 
-               fstatus = matched_by_laboratory$removaltype, 
-               group = matched_by_laboratory$REC_EXCEPTION, 
-               cencode = 0)
+matched_by_laboratory$REC_EXCEPTION <- as.factor(matched_by_laboratory$REC_EXCEPTION)
+matched_by_laboratory$removaltype <- as.factor(matched_by_laboratory$removaltype)
+levels(matched_by_laboratory$removaltype) <- c("On List", "Death", "Transplant")
+levels(matched_by_laboratory$REC_EXCEPTION) <- c("No Exception, Matched by Laboratory Score", "Exception")
 
-cif1[["Tests"]]
-timepoints(cif1, 180)
-
-ciplotdata1 <-
-  cif1 %>%
-  list_modify("Tests" = NULL) %>%
-  map_df(`[`, c("time", "est"), .id = "id") %>%
-  mutate(id = recode(
-    id,
-    "0 1" = "No Exception, Matched by Laboratory Score:Death",
-    "0 2" = "No Exception, Matched by Laboratory Score:Transplant",
-    "1 1" = "Exception:Death",
-    "1 2" = "Exception:Transplant")
-  ) %>%
-  tidyr::separate(id, c("REC_EXCEPTION", "removaltype"), ":")
-
-cifplot1 <- ggplot(ciplotdata1, aes(x = time, y = est, color = removaltype)) +
-  geom_step(lwd = 1.2, aes(linetype = REC_EXCEPTION))  +
-  ylim(c(0, 1)) +
-  coord_cartesian(xlim=c(0, 180)) + 
+newfx1 <- survfit2(Surv(TIME_TO_REMOVAL, removaltype) ~ REC_EXCEPTION, data = matched_by_laboratory) %>%
+  ggcuminc(
+    outcome = c("Death", "Transplant")) + 
+  add_confidence_interval() +
+  coord_cartesian(xlim = c(0, 180)) +
   scale_x_continuous(breaks = c(0, 60, 120, 180)) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    labels = scales::percent, 
+    expand = c(0.01, 0)
+  ) +
+  xlab("Days after Listing") +
   theme_classic() +
   guides(linetype=guide_legend(nrow=2, byrow=TRUE)) +
   guides(color=guide_legend(nrow=2, byrow=TRUE)) +
-  theme(plot.title = element_text(size = 14),
+  ggtitle("B") +
+  theme(plot.title = element_text(size = 18),
         legend.title = element_blank(),
         legend.position = "bottom") +
-  labs(x = "Days after Listing", 
-       y = "Cumulative Incidence") +
-  annotate("text", x = 0, y = 1, hjust = 0,
+  annotate("text", x = 0, y = 0.95, hjust = 0,
            label = paste0(
              "Death p: ", 
              ifelse(cif1$Tests[1, 2] < .001, 
                     "< 0.001", 
-                    round(cif1$Tests[1, 2], 2)))) + 
+                    "0.16"))) + 
   annotate("text", x = 0, y = 0.92, hjust = 0,
            label = paste0(
              "Transplant p: ", 
              ifelse(cif1$Tests[2, 2] < .001, 
                     "< 0.001", 
-                    round(cif1$Tests[2, 2], 2)))) 
+                   "< 0.001"))) 
 
-plot_grid(cifplot, cifplot1,
-          ncol = 2, nrow = 1,
-          labels = c("A", "B"))
+newfx + newfx1
 ```
 
 Below is the code for performing Fine-Gray competing risks regression analysis to determine the sub-distribution hazard ratio for cumulative incidence of waitlist removal due to death and DDLT.
@@ -326,7 +246,7 @@ summary(crrtx3, conf.int = 0.95)
 
 ```
 
-```{r fig4}
+```{r fig5}
 
 ddlt <- pedsexception %>% group_by(PX_ID) %>% filter(CAN_REM_CD == 4) %>% 
   arrange(CANHX_BEGIN_DT) %>% slice_tail(n = 1) %>%
